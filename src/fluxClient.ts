@@ -1,5 +1,4 @@
-import {InfluxDB, Point, QueryApi } from '@influxdata/influxdb-client';
-
+import { InfluxDB, QueryApi } from '@influxdata/influxdb-client';
 
 const fluxQuery = `from(bucket: "solar")
 |> range(start: -1m)
@@ -8,37 +7,25 @@ const fluxQuery = `from(bucket: "solar")
  |> yield(name: "last")`;
 
 type PowerResult = {
-    _time: string;
-    _value: number;
-}
+  _time: string;
+  _value: number;
+};
 
+export class FluxClient {
+  queryClient: QueryApi;
 
-export class FluxClient
-{
-    queryClient:QueryApi;
+  constructor(url: string, token: string, org: string) {
+    const client = new InfluxDB({ url, token });
+    this.queryClient = client.getQueryApi(org);
+  }
 
-    constructor(url:string, token:string, org:string)
-    {
-        const client = new InfluxDB({url, token});
-        this.queryClient = client.getQueryApi(org);
+  async getPower(): Promise<number | undefined> {
+    const data = (await this.queryClient.collectRows(fluxQuery)) as PowerResult[];
 
-
+    if (data && data.length > 0) {
+      return data[0]._value;
     }
 
-    async getPower():Promise<number|undefined>
-    {
-
-        const data = await this.queryClient.collectRows(fluxQuery) as PowerResult[];
-
-        if (data && data.length > 0)
-        {
-            return data[0]._value;
-        }
-
-        return;
-
-    }
-
-
-
+    return;
+  }
 }
