@@ -1,8 +1,16 @@
 import express, { Express, Request, Response } from 'express';
 import dotenv from 'dotenv';
 import { FluxClient } from './fluxClient';
+import { GetState, PowerState } from './control';
+
+type AllowParams = {
+  lastState: string;
+  temp: string;
+};
+
 
 dotenv.config();
+
 
 const app: Express = express();
 const port = process.env.PORT;
@@ -27,12 +35,15 @@ app.get('/power', async (req: Request, res: Response) => {
 
 app.get('/allow', async (req: Request, res: Response) => {
   console.log(req.query);
-
-
+  const params = req.query as AllowParams;
 
   const power = await flux.getPower();
-  res.send("HEATON");
-  //res.send((power ?? 0).toString());
+
+  if (GetState(power ?? 0))
+    res.send("HEATON");
+  else
+    res.send("HEAToff");
+
 });
 
 app.listen(port, () => {
