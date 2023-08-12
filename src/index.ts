@@ -39,7 +39,7 @@ app.get('/allow', async (req: Request, res: Response) => {
 
   const power = await flux.getPower();
 
-  if (GetState(power ?? 0))
+  if (GetState(power ?? 0, parseFloat(params.temp)))
     res.send("HEATON");
   else
     res.send("HEAToff");

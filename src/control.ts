@@ -29,16 +29,10 @@ function State2Bool(state:PowerState):boolean
     return false;
 }
 
-function calculateNow(power:number):boolean
+function calculateNow(power:number, temperature:number):boolean
 {
-    if (power > 2000)
-    {
-        return true;
-    } else {
-        return false;
-    }
-
-
+    const reqPower = Math.min(3550, 125.0 * temperature - 3950);
+    return (power > reqPower);
 }
 
 function setNewState(newState:PowerState)
@@ -57,13 +51,13 @@ function setNewState(newState:PowerState)
 
 }
 
-export function GetState(power:number):boolean
+export function GetState(power:number, temperature:number):boolean
 {
 
     if (process.hrtime.bigint() < retainstateUntil)
         return State2Bool(currentState);
 
-    const newTarget = calculateNow(power);
+    const newTarget = calculateNow(power, temperature);
 
     switch(currentState)
     {
