@@ -1,5 +1,7 @@
 //
 
+const HEATER_Watts = 2000;
+
 export enum PowerState {
     Undefined,
     Off,
@@ -29,8 +31,10 @@ function State2Bool(state:PowerState):boolean
     return false;
 }
 
-function calculateNow(power:number, temperature:number):boolean
+function calculateNow(power:number, temperature:number, heating: boolean):boolean
 {
+    if (heating)
+        power += HEATER_Watts;
     const reqPower = Math.min(3550, 125.0 * temperature - 3950);
     return (power > reqPower);
 }
@@ -57,7 +61,7 @@ export function GetState(power:number, temperature:number):boolean
     if (process.hrtime.bigint() < retainstateUntil)
         return State2Bool(currentState);
 
-    const newTarget = calculateNow(power, temperature);
+    const newTarget = calculateNow(power, temperature, currentState == PowerState.On);
 
     switch(currentState)
     {
