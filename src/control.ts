@@ -33,9 +33,7 @@ function State2Bool(state:PowerState):boolean
 
 function calculateNow(power:number, temperature:number, heating: boolean):boolean
 {
-    if (heating)
-        power += HEATER_Watts;
-    const reqPower = Math.min(3550, 125.0 * temperature - 3950);
+    const reqPower = Math.min(3550, 125.0 * temperature - 3950) - (heating? HEATER_Watts :0);
     return (power > reqPower);
 }
 
