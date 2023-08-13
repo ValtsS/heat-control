@@ -1,6 +1,6 @@
 //
 
-const HEATER_Watts = 2000;
+const HEATER_Watts = 2400;
 
 export enum PowerState {
     Undefined,
