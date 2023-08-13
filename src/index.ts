@@ -6,6 +6,7 @@ import { GetState, PowerState } from './control';
 type AllowParams = {
   lastState: string;
   temp: string;
+  relay: string;
 };
 
 
@@ -40,9 +41,11 @@ app.get('/allow', async (req: Request, res: Response) => {
   const power = await flux.getPower();
 
   if (GetState(power ?? 0, parseFloat(params.temp)))
-    res.send("HEATON");
+    res.send("HEATON\n").end();
   else
-    res.send("HEAToff");
+    res.send("HEAToff\n").end();
+
+
 
 });
 
