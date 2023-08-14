@@ -92,8 +92,7 @@ export function GetState(power:number, temperature:number, heaterOn:boolean):boo
     if (process.hrtime.bigint() < retainstateUntil)
         return State2Bool(currentState);
 
-    if (heaterOn)
-        power += HEATER_Watts;
+    console.log(`Avail power = ${power}`);
 
     const newTarget = calculateNow(power, temperature, heaterOn);
 
