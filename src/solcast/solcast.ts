@@ -1,7 +1,1 @@
-interface Solcast
-{
-
-
-}
-
-
+interface Solcast {}

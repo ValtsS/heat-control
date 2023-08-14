@@ -23,7 +23,7 @@ export class FluxClient {
     const data = (await this.queryClient.collectRows(fluxQuery)) as PowerResult[];
 
     if (data && data.length > 0) {
-      return data[data.length-1]._value;
+      return data[data.length - 1]._value;
     }
 
     return;

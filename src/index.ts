@@ -9,9 +9,7 @@ type AllowParams = {
   relay: string;
 };
 
-
 dotenv.config();
-
 
 const app: Express = express();
 const port = process.env.PORT;
@@ -40,14 +38,9 @@ app.get('/allow', async (req: Request, res: Response) => {
 
   const power = await flux.getPower();
 
-
   if (GetState(power ?? 0, parseFloat(params.temp), params.relay == '1'))
-    res.send("HEATON\n").end();
-  else
-    res.send("HEAToff\n").end();
-
-
-
+    res.send('HEATON\n').end();
+  else res.send('HEAToff\n').end();
 });
 
 app.listen(port, () => {
