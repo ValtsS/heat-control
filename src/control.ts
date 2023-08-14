@@ -1,6 +1,9 @@
 //
 
 const HEATER_Watts = 2400;
+// If available power is this = always on
+const FREE_HEAT_Above = 3600;
+
 
 export enum PowerState {
     Undefined,
@@ -33,7 +36,7 @@ function State2Bool(state:PowerState):boolean
 
 function calculateNow(power:number, temperature:number, heating: boolean):boolean
 {
-    const reqPower = Math.min(3550, 125.0 * temperature - 3950) - (heating? HEATER_Watts :0);
+    const reqPower = Math.min(FREE_HEAT_Above, 125.0 * temperature - 3950) - (heating? HEATER_Watts :0);
     return (power > reqPower);
 }
 
@@ -53,11 +56,14 @@ function setNewState(newState:PowerState)
 
 }
 
-export function GetState(power:number, temperature:number):boolean
+export function GetState(power:number, temperature:number, heaterOn:boolean):boolean
 {
 
     if (process.hrtime.bigint() < retainstateUntil)
         return State2Bool(currentState);
+
+    if (heaterOn)
+        power += HEATER_Watts;
 
     const newTarget = calculateNow(power, temperature, currentState == PowerState.On);
 
