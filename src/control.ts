@@ -57,12 +57,7 @@ function State2Bool(state: PowerState): boolean {
   return false;
 }
 
-export function calculateRequiredPower(
-  temperature: number,
-  heating: boolean,
-  settings: ControlData[]
-): number {
-
+export function calculateRequiredPower(temperature: number, settings: ControlData[]): number {
   var l = 0;
   var r = settings.length;
 
@@ -78,11 +73,11 @@ export function calculateRequiredPower(
   const minpwr = settings[l].requiredpower;
   const minT = settings[l].temperature;
 
-  const dx = settings[(l+1==settings.length)? l : l+1 ].requiredpower - minpwr;
-  const dy = ((l+1 == settings.length? 1e6 : settings[l+1].temperature) - minT);
+  const dx = settings[l + 1 == settings.length ? l : l + 1].requiredpower - minpwr;
+  const dy = (l + 1 == settings.length ? 1e6 : settings[l + 1].temperature) - minT;
 
-  const dT = ( temperature - minT) / dy;
-  return settings[l].requiredpower + ( dT * dx );
+  const dT = (temperature - minT) / dy;
+  return settings[l].requiredpower + dT * dx;
 }
 
 function setNewState(newState: PowerState) {
@@ -100,8 +95,8 @@ function setNewState(newState: PowerState) {
 export function GetState(power: number, temperature: number, heaterOn: boolean): boolean {
   if (process.hrtime.bigint() < retainstateUntil) return State2Bool(currentState);
 
-  const requiredpower = calculateRequiredPower(temperature, heaterOn, DefaultSettings);
-  const newTarget = power > (requiredpower - (heaterOn? HEATER_Watts : 0) );
+  const requiredpower = calculateRequiredPower(temperature, DefaultSettings);
+  const newTarget = power > requiredpower - (heaterOn ? HEATER_Watts : 0);
 
   console.log(
     `Avail power  = ${

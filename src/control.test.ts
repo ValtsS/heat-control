@@ -26,61 +26,22 @@ const Settings: ControlData[] = [
 describe('Control', () => {
   it('Calculation, heater off', async () => {
     for (let t = -55; t < 75; t++) {
-      var x = calculateRequiredPower( t, false, Settings);
+      var x = calculateRequiredPower(t, Settings);
 
-        if (t>=55)
-            expect(x).toBeGreaterThanOrEqual(3550);
-        else if (t>=50)
-        {
-            expect(x).toBeGreaterThanOrEqual(2400);
-            expect(x).toBeLessThan(3550);
-        }
-        else if (t>=45)
-        {
-            expect(x).toBeGreaterThanOrEqual(1000);
-            expect(x).toBeLessThan(2400);
-        }
-        else if (t>=42)
-        {
-            expect(x).toBeGreaterThanOrEqual(0);
-            expect(x).toBeLessThan(1000);
-        }
-        else if (t>=-5)
-        {
-            expect(x).toBeGreaterThanOrEqual(-2000);
-            expect(x).toBeLessThan(0);
-        }
-
+      if (t >= 55) expect(x).toBeGreaterThanOrEqual(3550);
+      else if (t >= 50) {
+        expect(x).toBeGreaterThanOrEqual(2400);
+        expect(x).toBeLessThan(3550);
+      } else if (t >= 45) {
+        expect(x).toBeGreaterThanOrEqual(1000);
+        expect(x).toBeLessThan(2400);
+      } else if (t >= 42) {
+        expect(x).toBeGreaterThanOrEqual(0);
+        expect(x).toBeLessThan(1000);
+      } else if (t >= -5) {
+        expect(x).toBeGreaterThanOrEqual(-2000);
+        expect(x).toBeLessThan(0);
+      }
     }
   });
-  it('Calculation, heater on', async () => {
-    for (let t = -55; t < 75; t++) {
-      var x = calculateRequiredPower( t, true, Settings);
-
-        if (t>=55)
-            expect(x).toBeGreaterThanOrEqual(3550);
-        else if (t>=50)
-        {
-            expect(x).toBeGreaterThanOrEqual(2400);
-            expect(x).toBeLessThan(3550);
-        }
-        else if (t>=45)
-        {
-            expect(x).toBeGreaterThanOrEqual(1000);
-            expect(x).toBeLessThan(2400);
-        }
-        else if (t>=42)
-        {
-            expect(x).toBeGreaterThanOrEqual(0);
-            expect(x).toBeLessThan(1000);
-        }
-        else if (t>=-5)
-        {
-            expect(x).toBeGreaterThanOrEqual(-2000);
-            expect(x).toBeLessThan(0);
-        }
-
-    }
-  });
-
 });
