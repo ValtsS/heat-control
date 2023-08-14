@@ -39,7 +39,7 @@ app.get('/allow', async (req: Request, res: Response) => {
   const params = req.query as AllowParams;
 
   const power = await flux.getPower();
-
+  console.log(`Avail power = ${power}`);
 
   if (GetState(power ?? 0, parseFloat(params.temp), params.relay == '1'))
     res.send("HEATON\n").end();
