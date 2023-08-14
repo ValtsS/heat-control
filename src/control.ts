@@ -15,7 +15,7 @@ const Settings: ControlData[] = [
     ,
     {
         temperature: 42.0, requiredpower: 0
-    },    ,
+    },
     {
         temperature: 45.0, requiredpower: 1000
     },
