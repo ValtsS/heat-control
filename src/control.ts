@@ -96,23 +96,23 @@ export function GetState(power: number, temperature: number, heaterOn: boolean):
   if (process.hrtime.bigint() < retainstateUntil) return State2Bool(currentState);
 
   const requiredpower = calculateRequiredPower(temperature, DefaultSettings);
-  const newTarget = power > requiredpower - (heaterOn ? HEATER_Watts : 0);
+  const enableHeater = power > requiredpower - (heaterOn ? HEATER_Watts : 0);
 
   console.log(
     `Avail power  = ${
       power + (heaterOn ? HEATER_Watts : 0)
-    }  actual = ${power} requiredpower = ${requiredpower} currentTState=${currentState}`
+    }  actual = ${power} requiredpower = ${requiredpower} currentTState=${currentState} enableHeater = ${enableHeater}`
   );
 
   switch (currentState) {
     case PowerState.Undefined:
-      setNewState(newTarget ? PowerState.TurningOn : PowerState.TurningOff);
+      setNewState(enableHeater ? PowerState.TurningOn : PowerState.TurningOff);
       break;
     case PowerState.Off:
-      if (newTarget) setNewState(PowerState.TurningOn);
+      if (enableHeater) setNewState(PowerState.TurningOn);
       break;
     case PowerState.On:
-      if (!newTarget) setNewState(PowerState.TurningOff);
+      if (!enableHeater) setNewState(PowerState.TurningOff);
       break;
     case PowerState.TurningOn:
       setNewState(PowerState.On);
