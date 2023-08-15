@@ -101,7 +101,9 @@ export function GetState(power: number, temperature: number, heaterOn: boolean):
   console.log(
     `Avail power  = ${
       power + (heaterOn ? HEATER_Watts : 0)
-    }  actual = ${power} requiredpower = ${requiredpower} currentTState=${currentState} enableHeater = ${enableHeater}`
+    }  actual = ${power} requiredpower = ${Math.round(
+      requiredpower
+    )} currentTState=${currentState} enableHeater = ${enableHeater}`
   );
 
   switch (currentState) {
