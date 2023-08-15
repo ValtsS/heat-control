@@ -32,11 +32,11 @@ export const DefaultSettings: ControlData[] = [
 ];
 
 export enum PowerState {
-  Undefined,
-  Off,
-  TurningOn,
-  On,
-  TurningOff,
+  Undefined = '?',
+  Off = '[-]',
+  TurningOn = ' + ',
+  On = '[+]',
+  TurningOff = ' - ',
 }
 
 let currentState: PowerState = PowerState.Undefined;
