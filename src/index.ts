@@ -1,7 +1,7 @@
-import express, { Express, Request, Response } from 'express';
 import dotenv from 'dotenv';
+import express, { Express, Request, Response } from 'express';
+import { GetState } from './control';
 import { FluxClient } from './fluxClient';
-import { GetState, PowerState } from './control';
 
 type AllowParams = {
   lastState: string;
@@ -22,7 +22,7 @@ if (!process.env.ORG) throw new Error('Missing ORG');
 
 const flux = new FluxClient(process.env.INFLUX_URL, process.env.INFLUX_TOKEN, process.env.ORG);
 
-app.get('/', async (req: Request, res: Response) => {
+app.get('/', (req: Request, res: Response) => {
   res.send(`/power to read available power<br/>
   /allow?temp=12.2 get permission to heat\n`);
 });
@@ -38,9 +38,13 @@ app.get('/allow', async (req: Request, res: Response) => {
 
   const power = await flux.getPower();
 
-  if (GetState(power ?? 0, parseFloat(params.temp), params.relay == '1'))
-    res.send('HEATON\n').end();
+  const heatIsOn = params.relay == '1';
+  const T = parseFloat(params.temp);
+
+  if (GetState(power ?? 0, T, heatIsOn)) res.send('HEATON\n').end();
   else res.send('HEAToff\n').end();
+
+  flux.recordStats(T, power ?? 0, heatIsOn);
 });
 
 app.listen(port, () => {

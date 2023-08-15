@@ -58,11 +58,11 @@ function State2Bool(state: PowerState): boolean {
 }
 
 export function calculateRequiredPower(temperature: number, settings: ControlData[]): number {
-  var l = 0;
-  var r = settings.length;
+  let l = 0;
+  let r = settings.length;
 
   while (l < r) {
-    var m = Math.trunc(l + (r - l) / 2);
+    let m = Math.trunc(l + (r - l) / 2);
 
     if (settings[m].temperature >= temperature) r = m;
     else l = m + 1;
