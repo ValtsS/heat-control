@@ -1,6 +1,6 @@
 //
 
-const HEATER_Watts = 2400 * 0.97; // intentionally lower to have hysteresis
+const HEATER_Watts = 2400 * 0.96; // intentionally lower to have hysteresis
 // If available power is this = always on
 
 export type ControlData = {
