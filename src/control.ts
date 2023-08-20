@@ -14,12 +14,16 @@ export const DefaultSettings: ControlData[] = [
     requiredpower: -2000,
   },
   {
-    temperature: 42.0,
+    temperature: 39.0,
     requiredpower: 0,
   },
   {
-    temperature: 45.0,
+    temperature: 42.0,
     requiredpower: 1000,
+  },
+  {
+    temperature: 45.0,
+    requiredpower: 1500,
   },
   {
     temperature: 50.0,
