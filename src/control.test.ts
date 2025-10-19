@@ -26,7 +26,7 @@ const Settings: ControlData[] = [
 describe('Control', () => {
   it('Calculation, heater off', async () => {
     for (let t = -55; t < 75; t++) {
-      var x = calculateRequiredPower(t, Settings);
+      const x = calculateRequiredPower(t, Settings);
 
       if (t >= 55) expect(x).toBeGreaterThanOrEqual(3550);
       else if (t >= 50) {
