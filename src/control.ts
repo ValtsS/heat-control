@@ -8,6 +8,59 @@ export type ControlData = {
   requiredpower: number;
 };
 
+
+/*
+export const DefaultSettings: ControlData[] = [
+  {
+    temperature: -5.0,
+    requiredpower: -2000,
+  },
+  {
+    temperature: 39.0,
+    requiredpower: 0,
+  },
+  {
+    temperature: 45.0,
+    requiredpower: 2400,
+  },
+  {
+    temperature: 55.0,
+    requiredpower: 2500,
+  },
+];
+
+*/
+
+export const DefaultSettings: ControlData[] = [
+  {
+    temperature: -5.0,
+    requiredpower: -2000,
+  },
+  {
+    temperature: 50.0,
+    requiredpower: 0,
+  },
+  {
+    temperature: 52.0,
+    requiredpower: 1250,
+  },
+  {
+    temperature: 53.0,
+    requiredpower: 2000,
+  },
+  {
+    temperature: 54.0,
+    requiredpower: 2400,
+  },
+  {
+    temperature: 55.0,
+    requiredpower: 3550,
+  },
+];
+
+
+/*
+
 export const DefaultSettings: ControlData[] = [
   {
     temperature: -5.0,
@@ -34,6 +87,9 @@ export const DefaultSettings: ControlData[] = [
     requiredpower: 3550,
   },
 ];
+
+
+*/
 
 export enum PowerState {
   Undefined = '?',
@@ -96,18 +152,30 @@ function setNewState(newState: PowerState) {
   }
 }
 
+function isSunUp(): boolean
+{
+    var month = (new Date()).getUTCMonth();
+    var hours = (new Date()).getUTCHours();
+
+
+    return hours >= 8; 
+
+}
+
 export function GetState(power: number, temperature: number, heaterOn: boolean): boolean {
   if (process.hrtime.bigint() < retainstateUntil) return State2Bool(currentState);
 
   const requiredpower = calculateRequiredPower(temperature, DefaultSettings);
-  const enableHeater = power > requiredpower - (heaterOn ? HEATER_Watts : 0);
+  let enableHeater = power > requiredpower - (heaterOn ? HEATER_Watts : 0);
+
+  enableHeater = enableHeater && (isSunUp() || power > 2000 );
 
   console.log(
     `Avail power  = ${
       power + (heaterOn ? HEATER_Watts : 0)
     }  actual = ${power} requiredpower = ${Math.round(
       requiredpower
-    )} currentTState=${currentState} enableHeater = ${enableHeater}`
+    )} currentTState=${currentState} enableHeater = ${enableHeater} isSunUp = ${isSunUp()}`
   );
 
   switch (currentState) {
