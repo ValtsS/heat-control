@@ -1,4 +1,5 @@
 //
+import { getSunElevationUTC } from './sun.ts';
 
 const HEATER_Watts = 2400 * 1.04; // intentionally lower to have hysteresis
 // If available power is this = always on
@@ -156,7 +157,8 @@ function isSunUp(): boolean
 {
     var month = (new Date()).getUTCMonth();
     var hours = (new Date()).getUTCHours();
-
+    
+    console.log(`elevation = ${getSunElevationUTC(57,25)}`);
 
     return hours >= 8; 
 
@@ -168,7 +170,7 @@ export function GetState(power: number, temperature: number, heaterOn: boolean):
   const requiredpower = calculateRequiredPower(temperature, DefaultSettings);
   let enableHeater = power > requiredpower - (heaterOn ? HEATER_Watts : 0);
 
-  enableHeater = enableHeater && (isSunUp() || power > 2000 );
+  enableHeater = enableHeater && (isSunUp() || (power + (heaterOn ? HEATER_Watts : 0)) > 2000 );
 
   console.log(
     `Avail power  = ${
