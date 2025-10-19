@@ -1,5 +1,5 @@
 //
-import { getSunElevationUTC } from './sun.ts';
+import { getSunElevationUTC } from './sun';
 
 const HEATER_Watts = 2400 * 1.04; // intentionally lower to have hysteresis
 // If available power is this = always on
@@ -157,10 +157,10 @@ function isSunUp(): boolean
 {
     var month = (new Date()).getUTCMonth();
     var hours = (new Date()).getUTCHours();
-    
+
     console.log(`elevation = ${getSunElevationUTC(57,25)}`);
 
-    return hours >= 8; 
+    return hours >= 8;
 
 }
 
