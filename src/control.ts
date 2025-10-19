@@ -1,5 +1,5 @@
 //
-import { getSunElevationUTC } from './sun';
+import { getSunElevationUTC, minutesFromSolarMiddayUTC } from './sun';
 
 const HEATER_Watts = 2400 * 1.04; // intentionally lower to have hysteresis
 // If available power is this = always on
@@ -7,6 +7,7 @@ const HEATER_Watts = 2400 * 1.04; // intentionally lower to have hysteresis
 const LON = 25;
 const LAT = 57;
 const MinElevDeg = 12;
+const MinutesToMidday = 120;
 
 export type ControlData = {
   temperature: number;
@@ -165,14 +166,16 @@ export function GetState(power: number, temperature: number, heaterOn: boolean):
 
   const elevation = getSunElevationUTC(LAT,LON);
 
-  enableHeater = enableHeater && ((elevation >= MinElevDeg) || (power + (heaterOn ? HEATER_Watts : 0)) > 2000 );
+  const minutesToMidDay = Math.abs(minutesFromSolarMiddayUTC(LON));
+
+  enableHeater = enableHeater && ((elevation >= MinElevDeg) || (power + (heaterOn ? HEATER_Watts : 0)) > 2000 || minutesToMidDay < MinutesToMidday );
 
   console.log(
     `Avail power  = ${
       power + (heaterOn ? HEATER_Watts : 0)
     }  actual = ${power} requiredpower = ${Math.round(
       requiredpower
-    )} currentTState=${currentState} enableHeater = ${enableHeater} Elevation = ${elevation} MinElev = ${MinElevDeg}`
+    )} currentTState=${currentState} enableHeater = ${enableHeater} Elevation = ${elevation} MinElev = ${MinElevDeg} MinutesToMidday = ${minutesToMidDay}`
   );
 
   switch (currentState) {

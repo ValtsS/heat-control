@@ -48,3 +48,34 @@ export function getSunElevationUTC(lat: number, lon: number): number {
   return rad2deg(elevationRad);
 }
 
+// returns minutes from solar midday (signed) at the current UTC moment for given longitude
+export function minutesFromSolarMiddayUTC(lon: number): number {
+  // helpers
+  const now = new Date();
+
+  // day of year as fractional day (includes time of day)
+  const yearStart = Date.UTC(now.getUTCFullYear(), 0, 0);
+  const msSinceYearStart = now.getTime() - yearStart;
+  const N = msSinceYearStart / 86400000; // fractional day-of-year
+
+  // simple Equation of Time (minutes) approximation
+  const B = (2 * Math.PI * (N - 81)) / 364;
+  const EoT_minutes = 9.87 * Math.sin(2 * B) - 7.53 * Math.cos(B) - 1.5 * Math.sin(B);
+
+  // current UTC time in hours (fractional)
+  const utcHours =
+    now.getUTCHours() +
+    now.getUTCMinutes() / 60 +
+    now.getUTCSeconds() / 3600 +
+    now.getUTCMilliseconds() / 3600000;
+
+  // approximate solar time in hours:
+  // - lon/15 converts longitude (deg) -> hours
+  // - EoT_minutes/60 corrects for Equation of Time
+  const solarTimeHours = utcHours + lon / 15 + EoT_minutes / 60;
+
+  // minutes from solar midday (solar noon = 12:00 solar time)
+  const minutesFromMidday = (solarTimeHours - 12) * 60;
+
+  return minutesFromMidday;
+}
