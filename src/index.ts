@@ -1,6 +1,7 @@
 import dotenv from 'dotenv';
 import express, { Express, Request, Response } from 'express';
-import { GetStateWithForecast } from './control';
+import { GetStateWithForecast, getControlStateForTest } from './control';
+import { planTank, defaultTankConfig } from './tank';
 import { FluxClient } from './fluxClient';
 import { OpenMeteoProvider } from './forecast/openMeteoProvider';
 import { SolcastProvider } from './forecast/solcastProvider';
@@ -57,7 +58,8 @@ const powerService = new PowerService(flux, () => forecastStore.load());
 app.get('/', (req: Request, res: Response) => {
   res.send(`/power to read available power<br/>
   /allow?temp=12.2 get permission to heat<br/>
-  /forecast to see cached forecast<br/>`);
+  /forecast to see cached forecast<br/>
+  /debug?temp=48.2 to see the full decision snapshot<br/>`);
 });
 
 app.get('/power', async (req: Request, res: Response) => {
@@ -69,6 +71,36 @@ app.get('/forecast', async (_req: Request, res: Response) => {
   const f = await forecastStore.load();
   if (!f) return res.status(404).send('no forecast yet');
   res.json({ provider: f.provider, fetchedAt: f.fetchedAt, forecasts: f.forecasts.slice(0, 48) });
+});
+
+// debug/stats snapshot of the whole decision
+app.get('/debug', async (req: Request, res: Response) => {
+  const at = new Date();
+  const temp = req.query.temp !== undefined ? parseFloat(String(req.query.temp)) : undefined;
+  const [power, forecast, legionellaForced, lastHot] = await Promise.all([
+    powerService.getAvailablePower(),
+    forecastStore.load(),
+    legionella.needsForcedHeat(),
+    forecastStore.lastHot(),
+  ]);
+  const plan = planTank(at, temp ?? NaN, forecast as any, defaultTankConfig());
+  res.json({
+    at: at.toISOString(),
+    temp: temp ?? null,
+    power: { watts: power.power ?? null, estimated: power.estimated, source: power.source },
+    controlState: getControlStateForTest(),
+    legionella: { forced: legionellaForced, lastHot: lastHot?.toISOString() ?? null },
+    forecast: forecast
+      ? {
+          provider: forecast.provider,
+          fetchedAt: forecast.fetchedAt,
+          ageMs: at.getTime() - forecast.fetchedAt.getTime(),
+          stale: at.getTime() - forecast.fetchedAt.getTime() > defaultTankConfig().forecastMaxAgeMs,
+          entries: forecast.forecasts.length,
+        }
+      : null,
+    plan: plan,
+  });
 });
 
 app.get('/allow', async (req: Request, res: Response) => {
