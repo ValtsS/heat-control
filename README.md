@@ -136,15 +136,24 @@ Heater relay state `PowerState` (`src/control.ts`), with 15 s `StabilizationTime
 ## Running
 
 ```sh
-npm ci            # pulls sqlite3 native
-npm test          # 9 suites 45 tests
+npm ci            # pulls sqlite3 native (pin-exact: package.json has no ^ ranges)
+npm test          # 10 suites 54 tests
 npm run build && node dist/index.js   # or npm start / npm run dev
+npm run security:audit   # npm audit --omit=dev + npm audit signatures
 # Docker: sh builddocker.sh then sh startdocker.sh
 # startdocker.sh mounts a named volume heat-control-data:/usr/src/app/data so the SQLite
 # DB (FORECAST_SQLITE=./data/heat.db) survives restarts and rebuilds.
 ```
 
 `data/` is gitignored – mount as volume in prod. `GET /power`, `GET /allow?temp=&relay=`, `GET /forecast` for ops.
+
+### Dependency & supply-chain posture
+
+- All versions are **pinned exact** (no `^`/`~`); `package-lock.json` (v3) is committed with integrity hashes so `npm ci` installs byte-for-byte what's on record.
+- Runtime deps (`express@4.22.2`, `sqlite3@6.0.1`, `@influxdata/influxdb-client`, `dotenv`, `suncalc`) are the only things that run in production.
+- The **multi-stage Dockerfile** installs `--omit=dev` in the runtime stage, so jest/babel/eslint/tar/node-gyp never ship to the deployed image – the shipped tree is just the prod runtime.
+- CI (`.github/workflows/audit.yml`) runs on every push/PR: `npm audit signatures` (registry tamper check) + `npm audit --omit=dev` (fails on any runtime vuln) + tests + build.
+- Dev-only vulns in the build toolchain are accepted knowingly – they never reach the runtime image. `npm run security:audit` re-checks locally.
 
 ## Behaviour vs old `dumb`
 

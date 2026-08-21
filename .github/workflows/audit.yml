@@ -1,0 +1,31 @@
+name: audit
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 19
+          cache: npm
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Verify registry signatures (tamper check)
+        run: npm audit signatures
+
+      - name: Audit runtime deps (fail on any vuln)
+        run: npm audit --omit=dev
+
+      - name: Tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
