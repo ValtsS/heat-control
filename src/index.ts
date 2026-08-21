@@ -59,7 +59,7 @@ app.get('/', (req: Request, res: Response) => {
   res.send(`/power to read available power<br/>
   /allow?temp=12.2 get permission to heat<br/>
   /forecast to see cached forecast<br/>
-  /debug?temp=48.2 to see the full decision snapshot<br/>`);
+  /debug to see the full decision snapshot<br/>`);
 });
 
 app.get('/power', async (req: Request, res: Response) => {
@@ -73,20 +73,24 @@ app.get('/forecast', async (_req: Request, res: Response) => {
   res.json({ provider: f.provider, fetchedAt: f.fetchedAt, forecasts: f.forecasts.slice(0, 48) });
 });
 
-// debug/stats snapshot of the whole decision
-app.get('/debug', async (req: Request, res: Response) => {
+// debug/stats snapshot of the whole decision.
+// temp comes from the last /allow sample in the DB (authoritative), not the caller.
+app.get('/debug', async (_req: Request, res: Response) => {
   const at = new Date();
-  const temp = req.query.temp !== undefined ? parseFloat(String(req.query.temp)) : undefined;
-  const [power, forecast, legionellaForced, lastHot] = await Promise.all([
+  const [power, forecast, legionellaForced, lastHot, lastSample] = await Promise.all([
     powerService.getAvailablePower(),
     forecastStore.load(),
     legionella.needsForcedHeat(),
     forecastStore.lastHot(),
+    forecastStore.lastSample(),
   ]);
-  const plan = planTank(at, temp ?? NaN, forecast as any, defaultTankConfig());
+  const temp = lastSample?.temp ?? NaN;
+  const plan = planTank(at, temp, forecast as any, defaultTankConfig());
   res.json({
     at: at.toISOString(),
-    temp: temp ?? null,
+    lastSample: lastSample
+      ? { at: lastSample.at.toISOString(), temp: lastSample.temp, power: lastSample.power, heatOn: lastSample.heatOn }
+      : null,
     power: { watts: power.power ?? null, estimated: power.estimated, source: power.source },
     controlState: getControlStateForTest(),
     legionella: { forced: legionellaForced, lastHot: lastHot?.toISOString() ?? null },
@@ -119,6 +123,10 @@ app.get('/allow', async (req: Request, res: Response) => {
 
   // legionella tracking – record if we reached 60C
   legionella.recordIfHot(T).catch((e) => console.error('legionella record', e));
+  // persist latest sample so /debug reflects the real background poll
+  forecastStore
+    .saveSample({ at: new Date(), temp: T, power: power ?? 0, heatOn: heatIsOn })
+    .catch((e) => console.error('saveSample', e));
   flux.recordStats(T, power ?? 0, heatIsOn);
 });
 

@@ -17,16 +17,20 @@ function makeForecast(pv: number): Forecast {
 }
 
 describe('MemoryForecastStore', () => {
-  it('save/load and legionella', async () => {
+  it('save/load and legionella + samples', async () => {
     const s = new MemoryForecastStore();
     expect(await s.load()).toBeNull();
     expect(await s.lastHot()).toBeNull();
+    expect(await s.lastSample()).toBeNull();
     const f = makeForecast(5);
     await s.save(f);
     expect((await s.load())?.forecasts[0].pv_estimate).toBe(5);
     const hot = new Date('2025-08-10T10:00:00Z');
     await s.saveHot(hot);
     expect(await s.lastHot()).toEqual(hot);
+    const sample = { at: new Date('2025-08-15T12:00:00Z'), temp: 48.5, power: 1200, heatOn: true };
+    await s.saveSample(sample);
+    expect(await s.lastSample()).toEqual(sample);
   });
 });
 
@@ -52,11 +56,20 @@ describe('SqliteForecastStore', () => {
     await s.saveHot(hot);
     expect((await s.lastHot())?.toISOString()).toBe(hot.toISOString());
 
+    const sample = { at: new Date('2025-08-15T11:00:00Z'), temp: 51.2, power: -800, heatOn: false };
+    await s.saveSample(sample);
+    const loadedSample = await s.lastSample();
+    expect(loadedSample?.at.toISOString()).toBe(sample.at.toISOString());
+    expect(loadedSample?.temp).toBe(51.2);
+    expect(loadedSample?.power).toBe(-800);
+    expect(loadedSample?.heatOn).toBe(false);
+
     await s.close();
     // reopen retains
     const s2 = new SqliteForecastStore(p);
     expect((await s2.load())?.provider).toBe('test');
     expect((await s2.lastHot())?.toISOString()).toBe(hot.toISOString());
+    expect((await s2.lastSample())?.temp).toBe(51.2);
     await s2.close();
   });
 
