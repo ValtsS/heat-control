@@ -1,5 +1,5 @@
 # --- build stage: full install + compile ------------------------------------
-FROM node:19 AS build
+FROM node:24 AS build
 WORKDIR /usr/src/app
 
 # package*.json first for layer caching (npm ci only re-runs when deps change)
@@ -10,7 +10,7 @@ COPY . .
 RUN npm run build
 
 # --- runtime stage: prod-only, no dev toolchain ------------------------------
-FROM node:19
+FROM node:24
 WORKDIR /usr/src/app
 ENV NODE_ENV=production
 
