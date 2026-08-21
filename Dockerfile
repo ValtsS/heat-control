@@ -1,5 +1,7 @@
 # --- build stage: full install + compile ------------------------------------
-FROM node:24 AS build
+# trixie = Debian 13 (glibc 2.40): satisfies the GLIBC_2.38 the sqlite3 prebuilt
+# binary requires (bookworm/glibc 2.36 fails to dlopen it).
+FROM node:24-trixie AS build
 WORKDIR /usr/src/app
 
 # package*.json first for layer caching (npm ci only re-runs when deps change)
@@ -10,7 +12,7 @@ COPY . .
 RUN npm run build
 
 # --- runtime stage: prod-only, no dev toolchain ------------------------------
-FROM node:24
+FROM node:24-trixie
 WORKDIR /usr/src/app
 ENV NODE_ENV=production
 
