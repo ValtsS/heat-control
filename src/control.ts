@@ -1,12 +1,18 @@
 //
 import { getSunElevationUTC } from './sun';
 import { planTank, defaultTankConfig } from './tank';
+import { parseNum, parseIntVal } from './config';
 
 const HEATER_Watts = 2400 * 1.04; // intentionally lower to have hysteresis
-const LAT = 57;
-const LON = 25;
-const MinElevDeg = 12; // offline solar gate (no forecast available)
-const HYSTERESIS_DEG = parseFloat(process.env.HYSTERESIS_DEG ?? '1');
+const LAT = parseNum(process.env.LAT, 57);
+const LON = parseNum(process.env.LON, 25);
+const MinElevDeg = parseNum(process.env.MIN_ELEV_DEG, 12); // offline solar gate (no forecast)
+const HYSTERESIS_DEG = parseNum(process.env.HYSTERESIS_DEG, 1);
+// daily hot-water guarantee (morning) – configurable
+const MORNING_TEMP = parseNum(process.env.MORNING_TEMP, 40);
+const MORNING_START_HOUR = parseIntVal(process.env.MORNING_START_HOUR, 6);
+const MORNING_END_HOUR = parseIntVal(process.env.MORNING_END_HOUR, 10);
+const MORNING_AVAIL_W = parseNum(process.env.MORNING_AVAIL_W, 800);
 
 // generic forecast types – avoid circular import, use minimal shape
 type ForecastForControl = {
@@ -97,12 +103,15 @@ export function GetStateWithForecast(
     // stale/missing forecast → fall back to raw sun elevation
     const solarOk = plan.stale ? elevation >= MinElevDeg : plan.solarToday > 0;
 
-    // daily 40C guarantee: cold morning must heat (hot water every day) – hard override
+    // daily hot-water guarantee: cold morning must heat (hot water every day) – hard override
     const hourLocal = at.getHours();
-    const needs40 = temperature < 40 && hourLocal >= 6 && hourLocal <= 10;
+    const needsMorning =
+      temperature < MORNING_TEMP &&
+      hourLocal >= MORNING_START_HOUR &&
+      hourLocal <= MORNING_END_HOUR;
 
-    if (needs40) {
-      enableHeater = solarOk || avail > 800;
+    if (needsMorning) {
+      enableHeater = solarOk || avail > MORNING_AVAIL_W;
     } else {
       enableHeater = temperature < plan.requiredNow - HYSTERESIS_DEG && solarOk;
     }

@@ -86,17 +86,44 @@ PV_ARRAYS=[{"kWp":3,"tilt":35,"azimuth":-90},{"kWp":10,"tilt":45,"azimuth":0}]
 PV_EFFICIENCY=0.85 LAT=57 LON=25
 FORECAST_SQLITE=./data/heat.db
 SOLCAST_API_KEY= SOLCAST_SITE_ID=         # if solcast
-LEGIONELLA_TEMP=60 LEGIONELLA_INTERVAL_MS=604800000
+FORECAST_INTERVAL=1h                      # poll interval ("6h" for solcast)
+FORECAST_MAX_AGE=6h                       # stale forecast → sun-gate only
+LEGIONELLA_TEMP=60 LEGIONELLA_INTERVAL=7d LEGIONELLA_MIN_DURATION=20m
 
 TANK_LITRES=150
 TARGET_TEMP=55
+TANK_MIN_TEMP=40
 TANK_LOSS_KWH_PER_DAY=2.85   # 55.8→50 over 8.5h
 USAGE_KWH_PER_DAY=6.1        # 8.98 kWh cycle − loss
 MAX_BANK_DEG=7
 TANK_MAX_TEMP=63             # thermostat
 HYSTERESIS_DEG=1
-FORECAST_MAX_AGE_MS=21600000 # stale forecast → sun-gate only
+MIN_ELEV_DEG=12              # offline sun gate
+MORNING_TEMP=40              # daily hot-water guarantee
+MORNING_START_HOUR=6 MORNING_END_HOUR=10
+MORNING_AVAIL_W=800
 ```
+
+Durations are human-readable (`"1h"`, `"7d"`, `"20m"`, `"90s"`, plain ms) via `src/config.ts:parseDuration`.
+
+## State machine
+
+Heater relay state `PowerState` (`src/control.ts`), with 15 s `StabilizationTime` on transitions:
+
+```
+                    enableHeater            !enableHeater
+ Undefined ────────────────► TurningOn ────────────────► On
+     │ enableHeater=false                (hold 15s)     │ !enableHeater
+     └────────────► TurningOff ─────────► Off ◄─────────┘
+                     (hold 15s)            │ enableHeater
+                                          └──► TurningOn
+```
+
+- `Undefined` (startup) → `TurningOn` if `enableHeater` else `TurningOff`.
+- `TurningOn`/`TurningOff` hold 15 s (relay stabilization) then **unconditionally** become `On`/`Off` on the next non-gated call.
+- `On` → `TurningOff` only when `!enableHeater`; `Off` → `TurningOn` only when `enableHeater`.
+- `State2Bool` maps `On`/`TurningOn`→`true`, `Off`/`TurningOff`→`false` (relay `HEATON`/`HEAToff`).
+- While `now < retainstateUntil` the state machine short-circuits and returns the current value (no re-eval, no logging).
 
 ## Running
 

@@ -1,9 +1,11 @@
 import { Forecast } from './forecast/types';
 import { ForecastProcessor } from './forecast/processor';
+import { parseDuration, parseNum } from './config';
 
 export type TankConfig = {
   litres: number;
   targetTemp: number; // end-of-day target °C
+  minTemp: number; // cold-water floor for energy math (default 40)
   tankLossKwhPerDay: number; // passive loss, from midnight→08:30 55.8→50 (≈2.85)
   usageKwhPerDay: number; // hot-water draws, from 8.98 kWh cycle − loss (≈6.1)
   maxBankDeg: number; // how far above target we preheat when tomorrow looks poor
@@ -22,13 +24,14 @@ export type TankPlan = {
 
 export function defaultTankConfig(): TankConfig {
   return {
-    litres: parseFloat(process.env.TANK_LITRES ?? '150'),
-    targetTemp: parseFloat(process.env.TARGET_TEMP ?? '55'),
-    tankLossKwhPerDay: parseFloat(process.env.TANK_LOSS_KWH_PER_DAY ?? '2.85'),
-    usageKwhPerDay: parseFloat(process.env.USAGE_KWH_PER_DAY ?? '6.1'),
-    maxBankDeg: parseFloat(process.env.MAX_BANK_DEG ?? '7'),
-    forecastMaxAgeMs: parseInt(process.env.FORECAST_MAX_AGE_MS ?? `${6 * 3600 * 1000}`, 10),
-    maxTemp: parseFloat(process.env.TANK_MAX_TEMP ?? '63'),
+    litres: parseNum(process.env.TANK_LITRES, 150),
+    targetTemp: parseNum(process.env.TARGET_TEMP, 55),
+    minTemp: parseNum(process.env.TANK_MIN_TEMP, 40),
+    tankLossKwhPerDay: parseNum(process.env.TANK_LOSS_KWH_PER_DAY, 2.85),
+    usageKwhPerDay: parseNum(process.env.USAGE_KWH_PER_DAY, 6.1),
+    maxBankDeg: parseNum(process.env.MAX_BANK_DEG, 7),
+    forecastMaxAgeMs: parseDuration(process.env.FORECAST_MAX_AGE, 6 * 3600 * 1000), // "6h"
+    maxTemp: parseNum(process.env.TANK_MAX_TEMP, 63),
   };
 }
 
@@ -57,16 +60,17 @@ export function planTank(
     ? ForecastProcessor.calcKWh(fc, midnight, new Date(midnight.getTime() + 24 * 3600e3), 0)
     : 0;
 
-  const needTomorrow = (cfg.targetTemp - 40) * EPD + cfg.tankLossKwhPerDay + cfg.usageKwhPerDay;
+  const needTomorrow =
+    (cfg.targetTemp - cfg.minTemp) * EPD + cfg.tankLossKwhPerDay + cfg.usageKwhPerDay;
 
   // bank only when we have a forecast that shows tomorrow won't cover the need
   let bankDelta = 0;
   if (fc && solarTomorrow < needTomorrow) {
     bankDelta = Math.min((needTomorrow - solarTomorrow) / EPD, cfg.maxBankDeg);
   }
-  // thermostat caps the tank at ~63-65 °C (never assume above maxTemp) – still ≥ legionella 60 °C
+  // thermostat caps the tank (never assume above maxTemp) – still ≥ legionella 60 °C
   const ceiling = Math.min(cfg.maxTemp, 65);
-  const targetEod = Math.min(Math.max(cfg.targetTemp + bankDelta, 40), ceiling);
+  const targetEod = Math.min(Math.max(cfg.targetTemp + bankDelta, cfg.minTemp), ceiling);
 
   // temp needed now to land at targetEod by midnight given remaining solar & loss
   const requiredNow = targetEod - (solarToday - lossToEod) / EPD;

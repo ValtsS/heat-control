@@ -1,5 +1,6 @@
 import { ForecastProvider } from './types';
 import { ForecastStore } from './cache';
+import { parseDuration } from '../config';
 
 export class ForecastScheduler {
   private timer: NodeJS.Timeout | null = null;
@@ -7,7 +8,8 @@ export class ForecastScheduler {
   constructor(
     private provider: ForecastProvider,
     private store: ForecastStore,
-    private intervalMs: number = parseInt(process.env.FORECAST_INTERVAL_MS ?? '3600000', 10) // 1h default, Solcast 10/day → 6h = 21600000
+    // "1h" default, Solcast 10/day → "6h"
+    private intervalMs: number = parseDuration(process.env.FORECAST_INTERVAL, 3600 * 1000)
   ) {}
 
   async start(): Promise<void> {

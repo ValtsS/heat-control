@@ -4,6 +4,7 @@ import { Forecast } from './forecast/types';
 const CFG: TankConfig = {
   litres: 150,
   targetTemp: 55,
+  minTemp: 40,
   tankLossKwhPerDay: 2.85, // 55.8→50 over 8.5h
   usageKwhPerDay: 6.1, // 8.98 kWh cycle − loss
   maxBankDeg: 7,

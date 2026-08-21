@@ -1,11 +1,15 @@
 import { ForecastStore } from './forecast/cache';
+import { parseDuration, parseIntVal } from './config';
 
-export const LEGIONELLA_TEMP = parseInt(process.env.LEGIONELLA_TEMP ?? '60', 10);
-export const LEGIONELLA_INTERVAL_MS = parseInt(
-  process.env.LEGIONELLA_INTERVAL_MS ?? `${7 * 24 * 3600 * 1000}`,
-  10
-);
-export const LEGIONELLA_MIN_DURATION_MS = 20 * 60 * 1000; // 20 min above temp counts as hot
+export const LEGIONELLA_TEMP = parseIntVal(process.env.LEGIONELLA_TEMP, 60);
+export const LEGIONELLA_INTERVAL_MS = parseDuration(
+  process.env.LEGIONELLA_INTERVAL,
+  7 * 24 * 3600 * 1000
+); // "7d"
+export const LEGIONELLA_MIN_DURATION_MS = parseDuration(
+  process.env.LEGIONELLA_MIN_DURATION,
+  20 * 60 * 1000
+); // "20m"
 
 // thermostat caps the tank ~63-65 °C, so 60 °C legionella target is reachable but 65+ never
 export const LEGIONELLA_TEMP_MAX = Math.min(LEGIONELLA_TEMP, 65);
