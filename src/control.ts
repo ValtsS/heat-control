@@ -9,6 +9,12 @@ const LAT = 57;
 const MinElevDeg = 12;
 const MinutesToMidday = 120;
 
+// generic forecast types – avoid circular import, use minimal shape
+type ForecastForControl = {
+  forecasts: { period_start: Date; period_end: Date; pv_estimate: number }[];
+  provider: string;
+} | null;
+
 export type ControlData = {
   temperature: number;
   requiredpower: number;
@@ -169,27 +175,65 @@ function setNewState(newState: PowerState) {
 }
 
 export function GetState(power: number, temperature: number, heaterOn: boolean): boolean {
+  return GetStateWithForecast(power, temperature, heaterOn, null, false);
+}
+
+export function GetStateWithForecast(
+  power: number | undefined,
+  temperature: number,
+  heaterOn: boolean,
+  forecast: ForecastForControl,
+  legionellaForced: boolean,
+  at: Date = new Date()
+): boolean {
   if (process.hrtime.bigint() < retainstateUntil) return State2Bool(currentState);
 
+  // handle undefined power (wifi down) – use estimated 0 here; caller should pass estimated value via power
+  const p = power ?? 0;
   const requiredpower = calculateRequiredPower(temperature, DefaultSettings);
-  let enableHeater = power > requiredpower - (heaterOn ? HEATER_Watts : 0);
+  let enableHeater = p > requiredpower - (heaterOn ? HEATER_Watts : 0);
 
   const elevation = getSunElevationUTC(LAT, LON);
-
   const minutesToMidDay = Math.abs(minutesFromSolarMiddayUTC(LON));
+  const avail = p + (heaterOn ? HEATER_Watts : 0);
 
-  enableHeater =
-    enableHeater &&
-    (elevation >= MinElevDeg ||
-      power + (heaterOn ? HEATER_Watts : 0) > 2000 ||
-      minutesToMidDay < MinutesToMidday);
+  // 60C legionella override – ignore sun/forecast, but still need power check
+  if (legionellaForced) {
+    // force heating if we need 60C, even at night, but keep hysteresis
+    console.log(
+      `LEGIONELLA forced avail=${avail} actual=${p} required=${Math.round(
+        requiredpower
+      )} elev=${elevation.toFixed(1)} mid=${minutesToMidDay.toFixed(0)}`
+    );
+    // no sun gate when forced
+  } else {
+    // daily 40C guarantee: if cold morning, relax avail threshold
+    const hourLocal = at.getHours();
+    const needs40 = temperature < 40 && hourLocal >= 6 && hourLocal <= 10;
+    if (needs40) {
+      // allow earlier heating with lower avail, but still need sun or some power
+      enableHeater = enableHeater && (elevation >= 10 || avail > 800 || minutesToMidDay < 90);
+    } else {
+      // morning defer: if forecast says enough later, require higher power now
+      const shouldDefer = shouldDeferMorning(forecast, at, temperature);
+      if (shouldDefer) {
+        // require extra 400W margin
+        enableHeater = p > requiredpower + 400 - (heaterOn ? HEATER_Watts : 0);
+      }
+      enableHeater =
+        enableHeater &&
+        (elevation >= MinElevDeg || avail > 2000 || minutesToMidDay < MinutesToMidday);
+    }
+  }
 
   console.log(
-    `Avail power  = ${
-      power + (heaterOn ? HEATER_Watts : 0)
-    }  actual = ${power} requiredpower = ${Math.round(
+    `Avail power  = ${avail}  actual = ${p} requiredpower = ${Math.round(
       requiredpower
-    )} currentTState=${currentState} enableHeater = ${enableHeater} Elevation = ${elevation} MinElev = ${MinElevDeg} MinutesToMidday = ${minutesToMidDay}`
+    )} currentTState=${currentState} enableHeater = ${enableHeater} Elevation = ${elevation.toFixed(
+      1
+    )} MinElev = ${MinElevDeg} MinutesToMidday = ${minutesToMidDay.toFixed(
+      0
+    )} legionella=${legionellaForced} forecast=${forecast?.provider ?? 'none'}`
   );
 
   switch (currentState) {
@@ -211,4 +255,27 @@ export function GetState(power: number, temperature: number, heaterOn: boolean):
   }
 
   return State2Bool(currentState);
+}
+
+// extracted for testability – mirrors policy.ts but without circular import
+function shouldDeferMorning(forecast: ForecastForControl, at: Date, tempNow: number): boolean {
+  if (!forecast) return false;
+  const hour = at.getUTCHours();
+  if (hour < 5 || hour > 9) return false;
+  if (tempNow >= 50) return false;
+  // need ~0.5kWh per degree to reach 50C
+  const needKWh = tempNow < 50 ? (50 - tempNow) * 0.5 : 0;
+  const untilEnd = new Date(at);
+  untilEnd.setUTCHours(23, 59, 59, 999);
+  let remaining = 0;
+  for (const f of forecast.forecasts) {
+    const overlap = Math.max(
+      0,
+      Math.min(f.period_end.getTime(), untilEnd.getTime()) -
+        Math.max(f.period_start.getTime(), at.getTime())
+    );
+    const hours = overlap / (1000 * 3600);
+    remaining += Math.max(0, f.pv_estimate) * hours;
+  }
+  return remaining > needKWh + 1;
 }
