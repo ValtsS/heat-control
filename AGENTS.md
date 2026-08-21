@@ -7,12 +7,12 @@
 - Entrypoint `src/index.ts` auto-picks provider, starts scheduler, `GET /allow` → `PowerService.getAvailablePower()` → `GetStateWithForecast(power, T, heaterOn, forecast, legionellaForced)`. `GET /forecast` debug, `GET /power` via `PowerService`.
 - `src/tank.ts` `planTank(at, T, forecast, cfg)` → `{ targetEod, requiredNow, solarToday, solarTomorrow, bankDelta, stale }`. Config from env (defaults calibrated from real stats: `TANK_LITRES=150`, `TARGET_TEMP=55`, `TANK_LOSS_KWH_PER_DAY=2.85` (55.8→50/8.5h), `USAGE_KWH_PER_DAY=6.1` (8.98 kWh cycle), `MAX_BANK_DEG=7`, `TANK_MAX_TEMP=63` thermostat, `FORECAST_MAX_AGE_MS=6h`).
 - Support modules: `src/legionella.ts` 60C/7d (`LEGIONELLA_TEMP=60`, `LEGIONELLA_INTERVAL_MS=604800000`), `src/power.ts` fallback chain `influx → forecast*1000 → sun-elev*40 (≤2400) → none`, `src/policy.ts` `estimatePowerFromForecast`/`estimatePowerFromSunElevation`.
-- Influx `src/fluxClient.ts:3` `solar` `active_grid_B_power_W` (net) + `Boiler` writes.
+- Influx `src/fluxClient.ts` reads `INFLUX_BUCKET`/`INFLUX_MEASUREMENT`/`INFLUX_FIELD` (default `solar`/`inverter-stats`/`active_grid_B_power_W`, the net surplus on the boiler's phase; `INFLUX_RANGE` look-back) + `Boiler` writes.
 
 ## Setup
 
 - `npm ci` (sqlite3 native via prebuild-install). Node `19` Docker, local `v24` ok – use `./node_modules/.bin/*`.
-- Env `.env` (see `.env.sample`): required `PORT,INFLUX_URL,INFLUX_TOKEN,ORG`; `FORECAST_PROVIDER`, `PV_ARRAYS` JSON (`parsePvArrays()`), `PV_EFFICIENCY`, `LAT/LON`, `FORECAST_SQLITE`, `SOLCAST_*`, `TANK_*`, `MORNING_*` (temp + local-hour window), `HYSTERESIS_DEG`, `MIN_ELEV_DEG`, `LEGIONELLA_*`. Durations are human-readable (`src/config.ts:parseDuration`) e.g. `FORECAST_INTERVAL=1h`, `FORECAST_MAX_AGE=6h`, `LEGIONELLA_INTERVAL=7d`, `LEGIONELLA_MIN_DURATION=20m` (not `*_MS`).
+- Env `.env` (see `.env.sample`, fully commented): required `PORT,INFLUX_URL,INFLUX_TOKEN,ORG`; `INFLUX_BUCKET/MEASUREMENT/FIELD/RANGE`, `FORECAST_PROVIDER`, `PV_ARRAYS` JSON (`parsePvArrays()`), `PV_EFFICIENCY`, `LAT/LON`, `FORECAST_SQLITE`, `SOLCAST_*`, `TANK_*`, `MORNING_*` (temp + local-hour window), `HYSTERESIS_DEG`, `MIN_ELEV_DEG`, `LEGIONELLA_*`. Durations are human-readable (`src/config.ts:parseDuration`) e.g. `FORECAST_INTERVAL=1h`, `FORECAST_MAX_AGE=6h`, `LEGIONELLA_INTERVAL=7d`, `LEGIONELLA_MIN_DURATION=20m`, `INFLUX_RANGE=3m` (not `*_MS`).
 
 ## Commands (local bins)
 

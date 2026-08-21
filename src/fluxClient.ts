@@ -1,9 +1,17 @@
 import { InfluxDB, Point, QueryApi, WriteApi } from '@influxdata/influxdb-client';
+import { parseDuration } from './config';
 
-const fluxQuery = `from(bucket: "solar")
-|> range(start: -3m)
- |> filter(fn: (r) => r["_measurement"] == "inverter-stats")
- |> filter(fn: (r) => r["_field"] == "active_grid_B_power_W")
+// configurable Influx source (defaults to the actual on-grid reading used)
+const INFLUX_BUCKET = process.env.INFLUX_BUCKET ?? 'solar';
+const INFLUX_MEASUREMENT = process.env.INFLUX_MEASUREMENT ?? 'inverter-stats';
+// net surplus on the boiler's phase (W) – positive=export, negative=import
+const INFLUX_FIELD = process.env.INFLUX_FIELD ?? 'active_grid_B_power_W';
+const INFLUX_RANGE = parseDuration(process.env.INFLUX_RANGE, 3 * 60 * 1000); // "3m"
+
+const fluxQuery = `from(bucket: "${INFLUX_BUCKET}")
+|> range(start: -${INFLUX_RANGE}ms)
+ |> filter(fn: (r) => r["_measurement"] == "${INFLUX_MEASUREMENT}")
+ |> filter(fn: (r) => r["_field"] == "${INFLUX_FIELD}")
  |> yield(name: "last")`;
 
 const BOILER_BUCKET = 'Boiler';
