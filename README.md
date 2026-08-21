@@ -130,7 +130,9 @@ Heater relay state `PowerState` (`src/control.ts`), with 15 s `StabilizationTime
 npm ci            # pulls sqlite3 native
 npm test          # 9 suites 45 tests
 npm run build && node dist/index.js   # or npm start / npm run dev
-# Docker: docker build . -t valtss/heat-control; docker run --env-file ./.env -p 8005:8005 -v $PWD/data:/usr/src/app/data valtss/heat-control
+# Docker: sh builddocker.sh then sh startdocker.sh
+# startdocker.sh mounts a named volume heat-control-data:/usr/src/app/data so the SQLite
+# DB (FORECAST_SQLITE=./data/heat.db) survives restarts and rebuilds.
 ```
 
 `data/` is gitignored – mount as volume in prod. `GET /power`, `GET /allow?temp=&relay=`, `GET /forecast` for ops.
