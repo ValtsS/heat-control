@@ -3,8 +3,6 @@ import { Forecast } from './forecast/types';
 import { estimatePowerFromForecast } from './policy';
 import { getSunElevationUTC } from './sun';
 
-const HOUSE_BASE_W = parseInt(process.env.HOUSE_BASE_W ?? '300', 10);
-
 export class PowerService {
   constructor(
     private flux: FluxClient,
@@ -28,9 +26,9 @@ export class PowerService {
       const f = await this.getForecast();
       const estKw = estimatePowerFromForecast(f, new Date());
       if (estKw != null) {
-        // forecast is PV generation, assume available = generation - base load
-        const estW = Math.max(0, estKw * 1000 - HOUSE_BASE_W);
-        // if forecast also missing but sun high, assume some power
+        // active_grid_B_power_W is already net (positive = export, negative = import),
+        // so forecast PV is used directly as estimate – no HOUSE_BASE_W subtraction
+        const estW = Math.max(0, estKw * 1000);
         return {
           power: estW,
           estimated: true,

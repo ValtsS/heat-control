@@ -14,8 +14,8 @@ Called as `GET /allow?temp=48.2&relay=0` → `GetStateWithForecast(power, T, hea
 
 ### 1. Input
 
-- `power` – **available** surplus `W` from `GET /power` → `FluxClient.getPower()` (`fluxClient.ts:26` last 3 min `active_grid_B_power_W`). If `undefined` (WiFi/Inﬂux down) `PowerService` (`power.ts:14`) tries:
-  1. `forecastNowKw = ForecastProcessor.calcNowKw(forecast, now)` (`processor.ts:42`) → `estW = max(0, forecastNowKw*1000 - HOUSE_BASE_W)`
+- `power` – **available** surplus `W` from `GET /power` → `FluxClient.getPower()` (`fluxClient.ts:26` last 3 min `active_grid_B_power_W`, **already net** – positive = export, negative = import). If `undefined` (WiFi/Inﬂux down) `PowerService` (`power.ts:14`) tries:
+  1. `forecastNowKw = ForecastProcessor.calcNowKw(forecast, now)` (`processor.ts:42`) → `estW = forecastNowKw*1000` (direct – net already, house load is implicit in `active_grid_B_power_W`)
   2. if no forecast → `sun elev >15° → 400 W` else `undefined` (no heat unless legionella forces it).
 - `T` – boiler `parseFloat(req.query.temp)` (`index.ts:42`) – `NaN` → `enable=false`.
 - `heaterOn` – `relay==1`.
@@ -70,18 +70,17 @@ enable && (elev≥12 || avail>2000 || |mid|<120)
 
 **d) State machine `control.ts:239-257`** – `Undefined→Turning* → On/Off` etc., returns `State2Bool`.
 
-### 5. HOUSE_BASE_W `power.ts:6` + `.env.sample:21`
+### 5. Forecast fallback when WiFi down `power.ts:14`
+
+When Inﬂux is down we estimate from forecast:
 
 ```
-estAvailable = forecastNowKw * 1000 - HOUSE_BASE_W
+estAvailable = forecastNowKw * 1000
 ```
 
-When Inﬂux is down we have only **PV generation forecast**, not surplus. House always draws base load (lights, fridge, router, pumps). Subtracting it estimates what would be `active_grid_B_power_W` if we measured.
+`active_grid_B_power_W` is already net surplus (negative = house import), so no extra `HOUSE_BASE_W` subtraction is needed – `forecastNowKw` is used directly as `available` estimate. The 400 W sun heuristic (`power.ts:30`, `elev>15° → 400 W`) is last resort if forecast also missing; else `undefined` → no heat (except legionella forced).
 
-- **Default `300` W** – average night-time `active_grid_B_power_W` without heater (negative = import). Look at Inﬂux `Boiler` `W_avail` at `elev<0` over a week, average ~250-400 W import.
-- **Tuning:** set `HOUSE_BASE_W` to your measured base. Too high → under-estimates surplus → conservative (heats later). Too low → over-estimates → may try to heat on grid when WiFi down. Check logs `source=forecast:open-meteo` vs `influx` during outages.
-- **Why not 0?** Using raw `pv_estimate` would assume all PV is surplus, heating even when house needs it (night baseline). Subtracting prevents false `avail` at dawn.
-- **Fallback after that:** if `elev>15°` → `400 W` heuristic (`power.ts:45`), else `undefined` → no heat (except legionella).
+Tuning is now via `required` curve (`control.ts:45`) and `PV_EFFICIENCY`, not a `HOUSE_BASE_W` constant (removed – earlier subtraction assumed base load, but `active_grid_B_power_W` already nets it).
 
 ### 6. Forecast `src/forecast/*`
 
@@ -97,13 +96,12 @@ When Inﬂux is down we have only **PV generation forecast**, not surplus. House
 `.env` (see `.env.sample:1`) – all on `smart`:
 
 ```
-PORT,INFLUX_URL,INFLUX_TOKEN,ORG          # required – Inﬂux 3-min surplus
+PORT,INFLUX_URL,INFLUX_TOKEN,ORG          # required – Inﬂux 3-min surplus (active_grid_B_power_W)
 FORECAST_PROVIDER=open-meteo|solcast
 PV_ARRAYS=[{"kWp":3,"tilt":35,"azimuth":-90},{"kWp":10,"tilt":45,"azimuth":0}]
 PV_EFFICIENCY=0.85 LAT=57 LON=25
 FORECAST_SQLITE=./data/heat.db
 SOLCAST_API_KEY= SOLCAST_SITE_ID=         # if solcast
-HOUSE_BASE_W=300
 LEGIONELLA_TEMP=60 LEGIONELLA_INTERVAL_MS=604800000
 FORECAST_INTERVAL_MS=3600000  # 6h for solcast
 ```

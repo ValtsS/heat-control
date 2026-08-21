@@ -39,9 +39,9 @@ describe('PowerService – wifi down fallback', () => {
     // set system time inside forecast period
     jest.useFakeTimers().setSystemTime(new Date('2025-08-15T10:30:00Z'));
     const r = await svc.getAvailablePower();
-    // 5kW - 0.3kW base = 4700W
+    // 5kW forecast directly as available (active_grid_B_power_W is already net)
     expect(r.estimated).toBe(true);
-    expect(r.power).toBeGreaterThan(4000);
+    expect(r.power).toBe(5000);
     jest.useRealTimers();
   });
 

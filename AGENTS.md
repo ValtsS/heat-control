@@ -5,13 +5,13 @@
 - Branch `smart` is `dumb` plus generic forecast. `src/control.ts:40-64` same dumb curve ` -5→-2000,48→0,50→200,53→1000,55→2400,57→3550`. `src/sun.ts:1` elevation/midday via `decl`+`EoT`. `src/solcast/solcast.ts` stays stub.
 - New forecast stack (pluggable): `src/forecast/types.ts` `ForecastProvider` interface, `src/forecast/openMeteoProvider.ts` (default, free no key) + `src/forecast/solcastProvider.ts` (stub for later, `SOLCAST_API_KEY`/`SOLCAST_SITE_ID`), `src/forecast/processor.ts` `calcKWh`/`estimatePower`, `src/forecast/cache.ts` `SqliteForecastStore` (`./data/heat.db`) + `Memory` fallback, `src/forecast/scheduler.ts` 1h poll (Solcast 10/day → set `FORECAST_INTERVAL_MS=21600000`).
 - Entrypoint `src/index.ts:12-45` auto-picks provider (`FORECAST_PROVIDER` or `solcast` if configured else `open-meteo`), starts scheduler, `GET /allow` → `PowerService.getAvailablePower()` → `GetStateWithForecast(power, T, heaterOn, forecast, legionellaForced)`. `GET /forecast` debug, `GET /power` uses `PowerService`.
-- Support modules: `src/legionella.ts` 60C/7d (`LEGIONELLA_TEMP=60`, `LEGIONELLA_INTERVAL_MS=604800000`), `src/power.ts` fallback `forecastNowKw*1000 - HOUSE_BASE_W`, `src/policy.ts` `shouldDeferMorning` + `daily 40C` (06-10 local).
+- Support modules: `src/legionella.ts` 60C/7d (`LEGIONELLA_TEMP=60`, `LEGIONELLA_INTERVAL_MS=604800000`), `src/power.ts` fallback `forecastNowKw*1000` (direct, `active_grid_B_power_W` already net), `src/policy.ts` `shouldDeferMorning` + `daily 40C` (06-10 local).
 - Influx `src/fluxClient.ts:3` `solar` `active_grid_B_power_W` + `Boiler` writes. No `src/solcast/` logic needed.
 
 ## Setup
 
 - `npm ci` (now includes `sqlite3@5.1.7` + `@types/sqlite3`, native build via `prebuild-install`). Node `19` Docker, local `v24` ok use `./node_modules/.bin/*`.
-- Env `.env` (see `.env.sample`): required `PORT,INFLUX_URL,INFLUX_TOKEN,ORG`; new `FORECAST_PROVIDER=open-meteo|solcast`, `PV_ARRAYS='[{"kWp":3,"tilt":35,"azimuth":-90},{"kWp":10,"tilt":45,"azimuth":0}]'`, `PV_EFFICIENCY=0.85`, `LAT/LON`, `FORECAST_SQLITE=./data/heat.db`, `SOLCAST_*` if solcast, `HOUSE_BASE_W=300`, `LEGIONELLA_*`. `PV_ARRAYS` JSON parses via `parsePvArrays()`.
+- Env `.env` (see `.env.sample`): required `PORT,INFLUX_URL,INFLUX_TOKEN,ORG`; new `FORECAST_PROVIDER=open-meteo|solcast`, `PV_ARRAYS='[{"kWp":3,"tilt":35,"azimuth":-90},{"kWp":10,"tilt":45,"azimuth":0}]'`, `PV_EFFICIENCY=0.85`, `LAT/LON`, `FORECAST_SQLITE=./data/heat.db`, `SOLCAST_*` if solcast, `LEGIONELLA_*`. `PV_ARRAYS` JSON parses via `parsePvArrays()`.
 
 ## Commands (local bins)
 
