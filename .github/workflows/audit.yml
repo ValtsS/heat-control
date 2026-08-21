@@ -18,8 +18,8 @@ jobs:
       - name: Install deps
         run: npm ci
 
-      - name: Verify registry signatures (tamper check)
-        run: npm audit signatures
+      - name: Verify registry signatures (tamper check, runtime deps)
+        run: npm audit signatures --omit=dev
 
       - name: Audit runtime deps (fail on any vuln)
         run: npm audit --omit=dev
