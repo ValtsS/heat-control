@@ -65,6 +65,22 @@ describe('planTank – horizon planner', () => {
     expect(plan.targetEod).toBeGreaterThan(CFG.targetTemp);
   });
 
+  it('bankable false when no solar today even if tank above target (night bug)', () => {
+    // regression: solarToday=0 (night), tank 60 above target → must NOT be bankable
+    const at = new Date('2025-08-15T21:00:00Z'); // night, ~0 solar left today
+    const fc = forecastFrom([0, 1]); // today 0 (night), poor tomorrow
+    const plan = planTank(at, 60, fc, CFG);
+    expect(plan.bankDelta).toBeGreaterThan(0); // still thinks tomorrow poor
+    expect(plan.bankable).toBe(false); // but no solar surplus to bank with → off
+  });
+
+  it('bankable true with real solar surplus (tank below target)', () => {
+    const at = new Date('2025-08-15T07:00:00Z');
+    const fc = forecastFrom([11, 2]); // plenty today, poor tomorrow
+    const plan = planTank(at, 45, fc, CFG);
+    expect(plan.bankable).toBe(true);
+  });
+
   it('stale forecast (older than max age) → treated as no-data, no bank, requiredNow high', () => {
     const at = new Date('2025-08-15T12:00:00Z');
     const fc = forecastFrom([11, 11], new Date('2025-08-15T01:00:00Z')); // 11h old > 6h

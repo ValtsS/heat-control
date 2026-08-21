@@ -69,13 +69,15 @@ export function planTank(
 
   // bank only when tomorrow is worse (can't meet its own need) AND today's remaining
   // solar actually exceeds what's needed to reach the no-bank target – i.e. there is
-  // real surplus solar to bank with (otherwise banking would just be grid import)
+  // real surplus solar to bank with (otherwise banking would just be grid import).
+  // Math.max(0, ...) prevents a negative threshold (tank already above target) from
+  // making `bankable` true even with zero remaining solar (e.g. at night).
   let bankDelta = 0;
   let bankable = false;
   const energyToTarget = (cfg.targetTemp - tempNow) * EPD + lossToEod;
   if (fc && shortfall > 0) {
     bankDelta = Math.min(shortfall / EPD, cfg.maxBankDeg);
-    bankable = solarToday > energyToTarget;
+    bankable = solarToday > Math.max(0, energyToTarget);
   }
   // thermostat caps the tank (never assume above maxTemp) – still ≥ legionella 60 °C
   const ceiling = Math.min(cfg.maxTemp, 65);

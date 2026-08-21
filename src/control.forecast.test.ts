@@ -73,6 +73,15 @@ describe('GetStateWithForecast – forecast-driven decision', () => {
     expect(getControlStateForTest()).toBe(PowerState.TurningOff);
   });
 
+  it('night, poor tomorrow, tank ABOVE target, solarToday 0 → NO bank-import', () => {
+    // regression: tank at 60 (> target 55), solarToday ~0 at night – must NOT heat to bank
+    const fc = makeForecast([0, 1]); // today 0 (night), poor tomorrow
+    const at = new Date('2025-08-15T21:00:00Z'); // night
+    jest.spyOn(sun, 'getSunElevationUTC').mockReturnValue(-10);
+    expect(GetStateWithForecast(100, 60, false, fc, false, at)).toBe(false);
+    expect(getControlStateForTest()).toBe(PowerState.TurningOff);
+  });
+
   it('decent day (good solar today), poor tomorrow → bank from solar surplus', () => {
     const fc = makeForecast([8, 1]); // today 8 (≥5 meaningful), tomorrow 1 → poor+bankable
     const at = new Date('2025-08-15T12:00:00Z');
