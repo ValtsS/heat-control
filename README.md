@@ -1,124 +1,116 @@
 # heat-control – smart solar boiler
 
-Heats a ~150L boiler from on-grid solar, with forecast-aware deferral, legionella protection and WiFi-down fallback. Branch `smart` on top of `dumb`.
+Heats a ~150L boiler from on-grid solar using a **tank horizon planner**: decide how hot the tank must be _now_ to cover the rest of today and pre-bank when tomorrow's solar is poor. Plus legionella (60 °C/7d), daily 40 °C guarantee, and WiFi-down fallback. Branch `smart` on top of `dumb`.
 
-- Inverter → Influx `solar` (`active_grid_B_power_W`) = grid surplus after house load. Heater is 2.4 kW (`HEATER_WATTS=2496` with hysteresis).
+- Inverter → Influx `solar` (`active_grid_B_power_W`) = net surplus after house load (positive=export, negative=import). Heater 2.4 kW (`HEATER_WATTS=2496`).
 - Panels: **3 kW east 35°** + **10 kW south 45°** (configurable via `PV_ARRAYS`).
-- Goal: hot water daily (≥40 °C morning) and **60 °C at least once per 7 days** even on bad weather, otherwise use sun.
+- Thermostat caps the tank at ~63 °C (`TANK_MAX_TEMP=63`), never assumed above.
 
 ---
 
-## Algorithm `src/control.ts:181-281` + `src/power.ts` + `src/legionella.ts`
+## Algorithm `src/tank.ts:planTank` + `src/control.ts:GetStateWithForecast`
 
-Called as `GET /allow?temp=48.2&relay=0` → `GetStateWithForecast(power, T, heaterOn, forecast, legionellaForced, at)`:
+Called as `GET /allow?temp=48.2&relay=0` → `PowerService.getAvailablePower()` → `GetStateWithForecast(power, T, heaterOn, forecast, legionellaForced, at)`:
 
-### 1. Input
+### 1. Tank energy model (`src/tank.ts`)
 
-- `power` – **available** surplus `W` from `GET /power` → `FluxClient.getPower()` (`fluxClient.ts:26` last 3 min `active_grid_B_power_W`, **already net** – positive = export, negative = import). If `undefined` (WiFi/Inﬂux down) `PowerService` (`power.ts:14`) tries:
-  1. `forecastNowKw = ForecastProcessor.calcNowKw(forecast, now)` (`processor.ts:42`) → `estW = forecastNowKw*1000` (direct – net already, house load is implicit in `active_grid_B_power_W`)
-  2. if no forecast → `sun elev >15° → 400 W` else `undefined` (no heat unless legionella forces it).
-- `T` – boiler `parseFloat(req.query.temp)` (`index.ts:42`) – `NaN` → `enable=false`.
-- `heaterOn` – `relay==1`.
-- `forecast` – 48 h `Forecast` from `SqliteForecastStore` (`forecast/cache.ts`) – hourly `pv_estimate kW` per array summed. `null` on first boot.
-- `legionellaForced` – `await legionella.needsForcedHeat()` (`legionella.ts:12`) = `now - last_hot > 7d` where `last_hot` is last `T≥60 °C` stored in same `heat.db` table `legionella` (`cache.ts:28`). Updated on every `recordIfHot( T≥60 )`.
+Calibrated from measured stats:
 
-### 2. Stabilization `control.ts:189-191`
+- `energyPerDeg = TANK_LITRES * 0.001161 = 0.174 kWh/°C` (150 L)
+- `TANK_LOSS_KWH_PER_DAY = 2.85` (observed 55.8 °C → 50 °C over 8.5 h = 0.68 °C/h)
+- `USAGE_KWH_PER_DAY = 6.1` (good-day 8.98 kWh cycle minus 2.85 loss)
 
-Globals `currentState:106` / `retainstateUntil:107` 15 s `hrtime.bigint()`. If `now < retainUntil` → return `State2Bool(currentState)` without re-evaluating (prevents relay chatter). `TurningOn/TurningOff` lock 15 s, `On/Off` → `now`.
-
-### 3. Required power `control.ts:194`
-
-`required = calculateRequiredPower(T, DefaultSettings:45)` – piecewise linear:
+### 2. Horizon plan `planTank(at, T, forecast, cfg)` → `{ targetEod, requiredNow, solarToday, solarTomorrow, bankDelta, stale }`
 
 ```
--5 → -2000 (always on), 48 → 0, 50 → 200, 53 → 1000, 55 → 2400, 57 → 3550
+needTomorrow  = (TARGET_TEMP-40)*EPD + tankLossKwhPerDay + usageKwhPerDay   // ≈11.6 kWh
+solarToday    = calcKWh(forecast, at,   midnight, 0)      // energy still coming today
+solarTomorrow = calcKWh(forecast, midnight, +24h, 0)      // energy for next day
+bankDelta     = forecast fresh && solarTomorrow < needTomorrow
+                ? clamp((needTomorrow - solarTomorrow)/EPD, 0, MAX_BANK_DEG) : 0
+targetEod     = clamp(TARGET_TEMP + bankDelta, 40, TANK_MAX_TEMP)   // ≤63 thermostat
+requiredNow   = targetEod - (solarToday - lossToEod)/EPD            // temp we must hold now
 ```
 
-Interpolated (`calculateRequiredPower:142`) binary-search + linear; flat above `57` (`dy=1e6`). ~37.7 W/°C below `48`. At `T=40` `required ≈ -400`, at `50` `200`.
+- **Good today & tomorrow** → big `solarToday` → `requiredNow` low → no morning heat (defer to midday).
+- **Late day** → `solarToday` small → `requiredNow` climbs → heats on surplus to keep tank hot through evening (usage + overnight loss).
+- **Poor tomorrow** → `bankDelta>0` → `targetEod`/`requiredNow` raised → preheats (banks) on today's surplus instead of buying energy tomorrow.
+- **Stale/missing forecast** (`at - fetchedAt > FORECAST_MAX_AGE_MS`) → `solarToday=0` → conservative, sun-gate only.
 
-Base enable:
-
-```
-enable = power > required - (heaterOn ? 2496 : 0)   // hysteresis
-avail  = power + (heaterOn ? 2496 : 0)              // for sun gate
-```
-
-### 4. Gates
-
-**a) Legionella `control.ts:200-208`** – if `forced` → skip all sun/forecast gates, keep only hysteresis (so it will heat on grid at 02:00 if needed). Logged `LEGIONELLA forced`.
-
-**b) Daily 40 °C `control.ts:210-215`** – `needs40 = T<40 && 6≤localHour≤10`. Then:
+### 3. Decision `control.ts:GetStateWithForecast`
 
 ```
-enable && (elev≥10 || avail>800 || |mid|<90)
+if legionellaForced → enable = true            // unconditional, may draw grid
+else:
+  plan   = planTank(at, T, forecast, defaultTankConfig())
+  solarOk = plan.stale ? elevation >= 12       // offline: raw sun elevation
+                       : plan.solarToday > 0   // fresh forecast: energy still coming (handles clouds)
+  if T<40 && 6<=localHour<=10:                 // daily 40 °C guarantee – hot water every morning
+    enable = solarOk || avail > 800
+  else:
+    enable = T < plan.requiredNow - HYSTERESIS_DEG && solarOk
 ```
 
-Relaxed (`800` vs `2000`) so cold morning still heats with modest sun/power, but not at `elev 5°` night.
+- `avail = power + (heaterOn ? 2496 : 0)`.
+- 15 s `StabilizationTime` (`process.hrtime.bigint()`) + state machine `Undefined→TurningOn→On→TurningOff→Off` unchanged.
+- `T=NaN` → `enable=false`.
 
-**c) Morning defer + normal `control.ts:216-225`** – otherwise:
+### 4. Offline / WiFi down `src/power.ts`
 
-- `shouldDeferMorning(forecast, at, T)` (`control.ts:261` mirrors `policy.ts:18`): `5≤UTChour≤9 && T<50 && remainingKWh > need+1` where `need=(50-T)*0.5 kWh` (≈150 L × 1 °C →0.5 kWh) and `remaining = Σ pv_estimate*hours` from `forecast` until `23:59 UTC` (`processor.ts:15`). If true → require `power > required + 400` (400 W margin – defers heating to midday peak when forecast says enough later).
-- Then sun gate:
+Fallback chain when grid data unavailable:
 
-```
-enable && (elev≥12 || avail>2000 || |mid|<120)
-  elev = getSunElevationUTC(57,25)  sun.ts:2   // decl+EoT
-  mid  = |minutesFromSolarMiddayUTC(25)| sun.ts:51 // solar noon ≈10:20 UTC at lon 25
-```
+1. **Grid** → `active_grid_B_power_W` (net).
+2. **Forecast only** → `estW = forecastNowKw*1000` (gross PV as outage estimate).
+3. **Neither** → sun elevation: `estW = min(2400, max(300, elev*40))` (`policy.ts:estimatePowerFromSunElevation`), peak sun → ~2.4 kW heater power.
+4. **Nothing (dark + no data)** → `undefined` → daily hot water relies on legionella forcing.
 
-`12°` keeps August 05Z `16°` open but earlier 04Z `8°` blocked; `120 min` allows winter noon even if low elev; `avail>2000` lets any time if >2 kW export (e.g., `heaterOn` adds `2496`).
+### 5. Legionella `src/legionella.ts`
 
-**d) State machine `control.ts:239-257`** – `Undefined→Turning* → On/Off` etc., returns `State2Bool`.
-
-### 5. Forecast fallback when WiFi down `power.ts:14`
-
-When Inﬂux is down we estimate from forecast:
-
-```
-estAvailable = forecastNowKw * 1000
-```
-
-`active_grid_B_power_W` is already net surplus (negative = house import), so no extra `HOUSE_BASE_W` subtraction is needed – `forecastNowKw` is used directly as `available` estimate. The 400 W sun heuristic (`power.ts:30`, `elev>15° → 400 W`) is last resort if forecast also missing; else `undefined` → no heat (except legionella forced).
-
-Tuning is now via `required` curve (`control.ts:45`) and `PV_EFFICIENCY`, not a `HOUSE_BASE_W` constant (removed – earlier subtraction assumed base load, but `active_grid_B_power_W` already nets it).
+`needsForcedHeat()` = no `T≥LEGIONELLA_TEMP` (60 °C) in `LEGIONELLA_INTERVAL_MS` (7 d), tracked via `lastHot` in `heat.db`. When forced → control enables unconditionally (may draw grid). Reachable since thermostat allows 63 °C.
 
 ### 6. Forecast `src/forecast/*`
 
-- **Pluggable `ForecastProvider` (`types.ts:14`)** – `fetchForecast():Promise<Forecast>`. `openMeteoProvider.ts` default (free, no key) fetches per array `https://api.open-meteo.com/v1/forecast?latitude=57&longitude=25&hourly=global_tilted_irradiance&tilt&azimuth&forecast_days=3&timezone=UTC` and `pv_estimate = irradiance* kWp * PV_EFFICIENCY /1000` summed. `solcastProvider.ts` stub `GET /rooftop_sites/{id}/forecasts?format=json&api_key=` – same `Forecast` shape (`period_start/end`, `pv_estimate`).
-- **Cache `cache.ts:15`** `SqliteForecastStore` `./data/heat.db` (auto `mkdir -p data`) tables `forecast(json,provider)` + `legionella(last_hot)`, `MemoryForecastStore` fallback. `load()` returns most recent; tests must `await close()`.
-- **Scheduler `scheduler.ts:12`** polls `PROVIDER` every `FORECAST_INTERVAL_MS` (default 1 h, set `21600000` =6 h for Solcast 10/day). `GET /allow` never blocks on fetch – reads cache. `GET /forecast` debug.
-- **Daily loop:** `index.ts:32-58` picks provider (`FORECAST_PROVIDER` or `solcast` if `SOLCAST_API_KEY` set else `open-meteo`), starts scheduler, on `/allow` does `powerService.getAvailablePower()` + `forecastStore.load()` + `legionella.needsForcedHeat()` → `GetStateWithForecast`.
+- **Pluggable `ForecastProvider` (`types.ts`)** – `fetchForecast():Promise<Forecast>`. `openMeteoProvider.ts` (default, free) fetches per array `https://api.open-meteo.com/v1/forecast?latitude=57&longitude=25&hourly=global_tilted_irradiance&tilt&azimuth&forecast_days=3&timezone=UTC`, `pv_estimate=irr*kWp*PV_EFFICIENCY/1000`, sums E+S. `solcastProvider.ts` stub `GET /rooftop_sites/{id}/forecasts?format=json&api_key=` (same shape).
+- **Cache `cache.ts`** `SqliteForecastStore` `./data/heat.db` (auto `mkdir -p data`) tables `forecast`+`legionella`, `Memory` fallback.
+- **Scheduler `scheduler.ts`** polls `FORECAST_INTERVAL_MS` (1 h default; 6 h = 21600000 for Solcast 10/day). `GET /allow` reads cache, never blocks on fetch.
+- **Staleness:** `FORECAST_MAX_AGE_MS` (default 6 h) – older forecast treated as no-data.
 
 ---
 
-## Configuration
-
-`.env` (see `.env.sample:1`) – all on `smart`:
+## Configuration (`.env.sample`)
 
 ```
-PORT,INFLUX_URL,INFLUX_TOKEN,ORG          # required – Inﬂux 3-min surplus (active_grid_B_power_W)
+PORT,INFLUX_URL,INFLUX_TOKEN,ORG          # required
 FORECAST_PROVIDER=open-meteo|solcast
 PV_ARRAYS=[{"kWp":3,"tilt":35,"azimuth":-90},{"kWp":10,"tilt":45,"azimuth":0}]
 PV_EFFICIENCY=0.85 LAT=57 LON=25
 FORECAST_SQLITE=./data/heat.db
 SOLCAST_API_KEY= SOLCAST_SITE_ID=         # if solcast
 LEGIONELLA_TEMP=60 LEGIONELLA_INTERVAL_MS=604800000
-FORECAST_INTERVAL_MS=3600000  # 6h for solcast
-```
 
-Panels optional – defaults to E+S above via `parsePvArrays()` (`types.ts:12`).
+TANK_LITRES=150
+TARGET_TEMP=55
+TANK_LOSS_KWH_PER_DAY=2.85   # 55.8→50 over 8.5h
+USAGE_KWH_PER_DAY=6.1        # 8.98 kWh cycle − loss
+MAX_BANK_DEG=7
+TANK_MAX_TEMP=63             # thermostat
+HYSTERESIS_DEG=1
+FORECAST_MAX_AGE_MS=21600000 # stale forecast → sun-gate only
+```
 
 ## Running
 
 ```sh
 npm ci            # pulls sqlite3 native
-npm test          # 10 suites 45 tests
+npm test          # 9 suites 45 tests
 npm run build && node dist/index.js   # or npm start / npm run dev
 # Docker: docker build . -t valtss/heat-control; docker run --env-file ./.env -p 8005:8005 -v $PWD/data:/usr/src/app/data valtss/heat-control
 ```
 
 `data/` is gitignored – mount as volume in prod. `GET /power`, `GET /allow?temp=&relay=`, `GET /forecast` for ops.
 
-## Tuning August morning
+## Behaviour vs old `dumb`
 
-Before: `elev 16°` at 05Z + `required 0` at `48C` → heated on `500W`. Now `shouldDeferMorning` raises to `required+400` when `remaining > need+1`, and daily `40C` gate is separate – keeps cold mornings hot but defers lukewarm to midday peak.
+- Old static curve (`calculateRequiredPower`) + `minutesToMidday`/`avail>2000` gates are **gone** – replaced by `planTank().requiredNow` + `solarToday>0` solar gate.
+- August morning: good day forecast → `requiredNow` low → no trickle heat at 05Z; bulk heat waits for export-limited midday. Poor forecast → heats on whatever surplus is available.
+- 2nd half of day: `requiredNow` climbs as `solarToday` shrinks → keeps tank hot through the evening for usage + overnight loss.

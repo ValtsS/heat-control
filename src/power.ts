@@ -1,6 +1,6 @@
 import { FluxClient } from './fluxClient';
 import { Forecast } from './forecast/types';
-import { estimatePowerFromForecast } from './policy';
+import { estimatePowerFromForecast, estimatePowerFromSunElevation } from './policy';
 import { getSunElevationUTC } from './sun';
 
 export class PowerService {
@@ -14,6 +14,7 @@ export class PowerService {
     estimated: boolean;
     source: string;
   }> {
+    // 1) grid data (net active_grid_B_power_W)
     try {
       const p = await this.flux.getPower();
       if (typeof p === 'number' && !isNaN(p))
@@ -21,13 +22,12 @@ export class PowerService {
     } catch (e) {
       console.error('flux getPower failed', e);
     }
-    // fallback to forecast estimate
+    // 2) forecast available, no grid data
     try {
       const f = await this.getForecast();
       const estKw = estimatePowerFromForecast(f, new Date());
       if (estKw != null) {
-        // active_grid_B_power_W is already net (positive = export, negative = import),
-        // so forecast PV is used directly as estimate – no HOUSE_BASE_W subtraction
+        // gross PV forecast used directly – active_grid_B is net, but this is only an outage estimate
         const estW = Math.max(0, estKw * 1000);
         return {
           power: estW,
@@ -38,9 +38,11 @@ export class PowerService {
     } catch (e) {
       console.error('forecast estimate failed', e);
     }
-    // last resort sun elevation heuristic – if sun up, assume 500W midday else 0
+    // 3) neither grid nor forecast – fall back to sun elevation (peak sun → heat)
     const elev = getSunElevationUTC(57, 25);
-    if (elev > 15) return { power: 400, estimated: true, source: 'sun-fallback' };
+    const estW = estimatePowerFromSunElevation(elev);
+    if (estW != null) return { power: estW, estimated: true, source: 'sun-fallback' };
+    // 4) nothing (dark + no data) – daily heat handled by legionella forcing
     return { power: undefined, estimated: true, source: 'none' };
   }
 }

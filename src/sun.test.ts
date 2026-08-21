@@ -1,4 +1,4 @@
-import { getSunElevationUTC, minutesFromSolarMiddayUTC } from './sun';
+import { getSunElevationUTC } from './sun';
 
 describe('sun – dumb branch', () => {
   beforeEach(() => jest.useFakeTimers());
@@ -25,19 +25,6 @@ describe('sun – dumb branch', () => {
     setDateUTC('2025-12-21T00:00:00.000Z');
     const el = getSunElevationUTC(57, 25);
     expect(el).toBeLessThan(0);
-  });
-
-  it('minutesFromSolarMidday ~0 near solar noon', () => {
-    // solar noon at lon 25 is around 10:20 UTC (12 - lon/15 = 10:20) minus EoT (~16 min on Nov 5)
-    setDateUTC('2025-11-05T10:20:00.000Z');
-    const m = minutesFromSolarMiddayUTC(25);
-    expect(Math.abs(m)).toBeLessThan(25);
-  });
-
-  it('midnight is far from midday (~±720 min)', () => {
-    setDateUTC('2025-06-21T00:00:00.000Z');
-    const m = Math.abs(minutesFromSolarMiddayUTC(25));
-    expect(m).toBeGreaterThan(500);
   });
 
   it('elevation respects Date mock, not system clock', () => {

@@ -45,7 +45,7 @@ describe('PowerService – wifi down fallback', () => {
     jest.useRealTimers();
   });
 
-  it('falls back to sun when both missing', async () => {
+  it('falls back to sun elevation when both missing (peak sun → high power)', async () => {
     const store = new MemoryForecastStore();
     const flux = makeFlux(undefined);
     const svc = new PowerService(flux, () => store.load());
@@ -53,8 +53,21 @@ describe('PowerService – wifi down fallback', () => {
     jest.useFakeTimers().setSystemTime(new Date('2025-06-21T12:00:00Z'));
     const r = await svc.getAvailablePower();
     expect(r.estimated).toBe(true);
-    // sun elevation at noon in summer >15 => 400W fallback
-    expect([0, 400]).toContain(r.power!);
+    expect(r.source).toBe('sun-fallback');
+    // June noon elev ~56° → elev*40=2240 → clamp 2400
+    expect(r.power).toBeGreaterThan(1500);
+    jest.useRealTimers();
+  });
+
+  it('returns undefined when dark and no data (legionella handles)', async () => {
+    const store = new MemoryForecastStore();
+    const flux = makeFlux(undefined);
+    const svc = new PowerService(flux, () => store.load());
+    // winter midnight – elevation negative → undefined
+    jest.useFakeTimers().setSystemTime(new Date('2025-12-21T00:00:00Z'));
+    const r = await svc.getAvailablePower();
+    expect(r.power).toBeUndefined();
+    expect(r.source).toBe('none');
     jest.useRealTimers();
   });
 });

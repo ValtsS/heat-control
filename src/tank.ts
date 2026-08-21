@@ -1,0 +1,75 @@
+import { Forecast } from './forecast/types';
+import { ForecastProcessor } from './forecast/processor';
+
+export type TankConfig = {
+  litres: number;
+  targetTemp: number; // end-of-day target °C
+  tankLossKwhPerDay: number; // passive loss, from midnight→08:30 55.8→50 (≈2.85)
+  usageKwhPerDay: number; // hot-water draws, from 8.98 kWh cycle − loss (≈6.1)
+  maxBankDeg: number; // how far above target we preheat when tomorrow looks poor
+  forecastMaxAgeMs: number; // stale forecast → treated as no-data
+  maxTemp: number; // thermostat ceiling (≈63-65 °C), must stay ≤65
+};
+
+export type TankPlan = {
+  targetEod: number; // where we want the tank at midnight
+  requiredNow: number; // current temperature needed to hit targetEod by midnight
+  solarToday: number; // kWh still coming today (from `at` to midnight)
+  solarTomorrow: number; // kWh forecast for the next 24h
+  bankDelta: number; // °C we're preheating for tomorrow
+  stale: boolean; // forecast missing or older than forecastMaxAgeMs
+};
+
+export function defaultTankConfig(): TankConfig {
+  return {
+    litres: parseFloat(process.env.TANK_LITRES ?? '150'),
+    targetTemp: parseFloat(process.env.TARGET_TEMP ?? '55'),
+    tankLossKwhPerDay: parseFloat(process.env.TANK_LOSS_KWH_PER_DAY ?? '2.85'),
+    usageKwhPerDay: parseFloat(process.env.USAGE_KWH_PER_DAY ?? '6.1'),
+    maxBankDeg: parseFloat(process.env.MAX_BANK_DEG ?? '7'),
+    forecastMaxAgeMs: parseInt(process.env.FORECAST_MAX_AGE_MS ?? `${6 * 3600 * 1000}`, 10),
+    maxTemp: parseFloat(process.env.TANK_MAX_TEMP ?? '63'),
+  };
+}
+
+/**
+ * Horizon planner – pure. Decides how hot the tank should be right now to
+ * (a) end today at targetEod, (b) bank extra when tomorrow's solar is poor.
+ */
+export function planTank(
+  at: Date,
+  tempNow: number,
+  forecast: Forecast | null,
+  cfg: TankConfig
+): TankPlan {
+  const EPD = cfg.litres * 0.001161; // kWh per °C
+  const midnight = new Date(at);
+  midnight.setUTCHours(24, 0, 0, 0);
+
+  const stale = !forecast || at.getTime() - forecast.fetchedAt.getTime() > cfg.forecastMaxAgeMs;
+  const fc = stale ? null : forecast;
+
+  const hoursToMidnight = Math.max(0, (midnight.getTime() - at.getTime()) / 3600e3);
+  const lossToEod = (cfg.tankLossKwhPerDay / 24) * hoursToMidnight;
+
+  const solarToday = fc ? ForecastProcessor.calcKWh(fc, at, midnight, 0) : 0;
+  const solarTomorrow = fc
+    ? ForecastProcessor.calcKWh(fc, midnight, new Date(midnight.getTime() + 24 * 3600e3), 0)
+    : 0;
+
+  const needTomorrow = (cfg.targetTemp - 40) * EPD + cfg.tankLossKwhPerDay + cfg.usageKwhPerDay;
+
+  // bank only when we have a forecast that shows tomorrow won't cover the need
+  let bankDelta = 0;
+  if (fc && solarTomorrow < needTomorrow) {
+    bankDelta = Math.min((needTomorrow - solarTomorrow) / EPD, cfg.maxBankDeg);
+  }
+  // thermostat caps the tank at ~63-65 °C (never assume above maxTemp) – still ≥ legionella 60 °C
+  const ceiling = Math.min(cfg.maxTemp, 65);
+  const targetEod = Math.min(Math.max(cfg.targetTemp + bankDelta, 40), ceiling);
+
+  // temp needed now to land at targetEod by midnight given remaining solar & loss
+  const requiredNow = targetEod - (solarToday - lossToEod) / EPD;
+
+  return { targetEod, requiredNow, solarToday, solarTomorrow, bankDelta, stale };
+}

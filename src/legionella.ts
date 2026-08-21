@@ -7,6 +7,9 @@ export const LEGIONELLA_INTERVAL_MS = parseInt(
 );
 export const LEGIONELLA_MIN_DURATION_MS = 20 * 60 * 1000; // 20 min above temp counts as hot
 
+// thermostat caps the tank ~63-65 °C, so 60 °C legionella target is reachable but 65+ never
+export const LEGIONELLA_TEMP_MAX = Math.min(LEGIONELLA_TEMP, 65);
+
 export class LegionellaService {
   constructor(private store: ForecastStore) {}
 

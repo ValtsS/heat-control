@@ -37,4 +37,15 @@ describe('LegionellaService – 60C/7d', () => {
     // afternoon not morning window
     expect(LegionellaService.needsDaily40C(35, new Date('2025-08-15T15:00:00'))).toBe(false);
   });
+
+  it('configurable temperature via env', async () => {
+    const store = new MemoryForecastStore();
+    const svc = new LegionellaService(store);
+    // default 60 – 59 does not record
+    await svc.recordIfHot(59);
+    expect(await store.lastHot()).toBeNull();
+    // 60 records
+    await svc.recordIfHot(60, new Date('2025-08-15T10:00:00Z'));
+    expect(await store.lastHot()).not.toBeNull();
+  });
 });

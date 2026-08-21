@@ -7,83 +7,105 @@ import {
 import { Forecast } from './forecast/types';
 import * as sun from './sun';
 
-function makeForecast(pvs: number[]): Forecast {
-  // hourly 10:00, 11:00, ... pv
-  const base = new Date('2025-08-15T10:00:00Z');
-  return {
-    forecasts: pvs.map((pv, i) => ({
-      period_start: new Date(base.getTime() + i * 3600_000),
-      period_end: new Date(base.getTime() + (i + 1) * 3600_000),
-      pv_estimate: pv,
-    })),
-    fetchedAt: new Date(),
-    provider: 'test',
-  };
+// forecast spans today + tomorrow, flat kWh/day starting 05:00 UTC
+function makeForecast(dayKwh: number[], fetchedAt?: string): Forecast {
+  const base = new Date('2025-08-15T05:00:00Z');
+  const fetched = fetchedAt ? new Date(fetchedAt) : new Date(); // fresh unless overridden
+  const entries = [];
+  for (let d = 0; d < dayKwh.length; d++) {
+    for (let h = 0; h < 24; h++) {
+      const start = new Date(base.getTime() + d * 24 * 3600e3 + h * 3600e3);
+      entries.push({
+        period_start: start,
+        period_end: new Date(start.getTime() + 3600e3),
+        pv_estimate: dayKwh[d] / 24,
+      });
+    }
+  }
+  return { forecasts: entries, fetchedAt: fetched, provider: 'test' };
 }
 
-describe('GetStateWithForecast – generic provider', () => {
+describe('GetStateWithForecast – tank horizon planner', () => {
   let hrtimeSpy: jest.SpyInstance;
   beforeEach(() => {
     resetControlStateForTest();
     hrtimeSpy = jest.spyOn(process.hrtime, 'bigint').mockReturnValue(BigInt(1_000_000_000_000));
     jest.spyOn(sun, 'getSunElevationUTC').mockReturnValue(30);
-    jest.spyOn(sun, 'minutesFromSolarMiddayUTC').mockReturnValue(0);
     jest.spyOn(console, 'log').mockImplementation(() => {});
   });
   afterEach(() => jest.restoreAllMocks());
 
-  it('defers morning 05Z low-temp when forecast says enough later', () => {
-    // 05Z morning, T=35 (<40), forecast high remainder of day 10kWh
-    const forecast = makeForecast([8, 8, 8, 8, 8, 8, 8, 8]); // 8kW each hour
-    const at = new Date('2025-08-15T05:30:00Z');
-    // power 500 small – without forecast would heat (48->0 at T35 required ~ -800 → 500>-800 true and sun high)
-    // with forecast defer, should require +400 margin → still? at T35 required ~ -1000, 500 > -600 true but defer adds 400 → 500 > -600+400? need compute
-    // Simpler: at T35 required ~ -900 (interpolated -5->48), so 500 always > required. Defer adds 400 but still passes. Test defer path via T=48? Use T=48 required 0, 500>0 true, defer would require 500>400 true still passes.
-    // To make defer block, use low power 100 and T=48: 100>0 true, but 100>400 false → blocked
-    const shouldDefer = GetStateWithForecast(100, 48, false, forecast, false, at);
-    expect(shouldDefer).toBe(false); // deferred
+  it('morning, good day → defer (requiredNow low, tank warm enough)', () => {
+    const fc = makeForecast([11, 11]); // good today + tomorrow
+    const at = new Date('2025-08-15T07:00:00Z');
+    // T=48, requiredNow well below 40 → no morning heat
+    expect(GetStateWithForecast(500, 48, false, fc, false, at)).toBe(false);
     expect(getControlStateForTest()).toBe(PowerState.TurningOff);
   });
 
-  it('does not defer if forecast poor', () => {
-    const forecastPoor = makeForecast([0.2, 0.2, 0.2]);
-    const at = new Date('2025-08-15T05:30:00Z');
-    jest.spyOn(sun, 'getSunElevationUTC').mockReturnValue(30);
-    const ok = GetStateWithForecast(600, 48, false, forecastPoor, false, at);
-    expect(ok).toBe(true);
-  });
-
-  it('daily 40C guarantee – cold morning forces enable even with low sun', () => {
-    const forecastLow = makeForecast([0, 0, 0]);
+  it('morning, good day but tank cold (T<40) → 40C guarantee heats', () => {
+    const fc = makeForecast([11, 11]);
     const at = new Date('2025-08-15T07:00:00Z');
-    at.setHours(7); // local 7
-    jest.spyOn(sun, 'getSunElevationUTC').mockReturnValue(5); // low
-    jest.spyOn(sun, 'minutesFromSolarMiddayUTC').mockReturnValue(300);
-    // T=35 <40 morning, power 900 avail 900+0 >800 allows despite low elev
-    expect(GetStateWithForecast(900, 35, false, forecastLow, false, at)).toBe(true);
+    at.setHours(7); // local morning
+    expect(GetStateWithForecast(900, 35, false, fc, false, at)).toBe(true);
+    expect(getControlStateForTest()).toBe(PowerState.TurningOn);
+  });
+
+  it('late day, poor tomorrow → bank: heat at higher tank temp than good tomorrow', () => {
+    const at = new Date('2025-08-15T18:00:00Z');
+    const fcPoor = makeForecast([11, 2]); // tomorrow poor → bank to ~62
     resetControlStateForTest();
-    // but 500 <800 should still block
-    expect(GetStateWithForecast(500, 35, false, forecastLow, false, at)).toBe(false);
+    // T=48 with poor tomorrow → requiredNow ~50 → heat
+    expect(GetStateWithForecast(1000, 48, false, fcPoor, false, at)).toBe(true);
+    const fcGood = makeForecast([11, 11]); // tomorrow good → target ~58
+    resetControlStateForTest();
+    // same T=48 with good tomorrow → requiredNow ~46 → no heat yet
+    expect(GetStateWithForecast(1000, 48, false, fcGood, false, at)).toBe(false);
   });
 
-  it('legionellaForced ignores sun gate', () => {
-    jest.spyOn(sun, 'getSunElevationUTC').mockReturnValue(2);
-    jest.spyOn(sun, 'minutesFromSolarMiddayUTC').mockReturnValue(400);
+  it('late day, little solar left → keep tank hot (requiredNow high)', () => {
+    const fc = makeForecast([11, 11]);
+    const at = new Date('2025-08-15T18:00:00Z');
+    // requiredNow ~46; T=45 is below it → heat to hold through evening
+    expect(GetStateWithForecast(1000, 45, false, fc, false, at)).toBe(true);
+  });
+
+  it('stale forecast → treated as no-data: sun-gate only, conservative', () => {
+    const fc = makeForecast([11, 11], '2025-08-15T01:00:00Z'); // 11h stale
+    const at = new Date('2025-08-15T12:00:00Z');
+    jest.spyOn(sun, 'getSunElevationUTC').mockReturnValue(5); // sun low
+    expect(GetStateWithForecast(1000, 40, false, fc, false, at)).toBe(false);
+    resetControlStateForTest();
+    jest.spyOn(sun, 'getSunElevationUTC').mockReturnValue(20);
+    expect(GetStateWithForecast(1000, 40, false, fc, false, at)).toBe(true);
+  });
+
+  it('legionellaForced heats even at night with no power (grid import)', () => {
+    jest.spyOn(sun, 'getSunElevationUTC').mockReturnValue(-10);
     const forecast = null;
-    // power 600, T 52 required 1250? Actually 52->1250, 600>1250 false even with heater off. Use T 48 required 0 → 600>0 true but sun low would block. Forced should ignore sun and pass
+    // 02Z night, grid importing (negative power), T cold → forced must override
     expect(
-      GetStateWithForecast(600, 48, false, forecast, true, new Date('2025-08-15T02:00:00Z'))
+      GetStateWithForecast(-500, 52, false, forecast, true, new Date('2025-08-15T02:00:00Z'))
     ).toBe(true);
+    expect(getControlStateForTest()).toBe(PowerState.TurningOn);
   });
 
-  it('undefined power (wifi down) uses 0 but still respects legionella', () => {
+  it('undefined power (wifi down): sun up → heat, sun down → off, forced → on', () => {
+    jest.spyOn(sun, 'getSunElevationUTC').mockReturnValue(30); // sun up
     expect(
-      GetStateWithForecast(undefined, 48, false, null, false, new Date('2025-08-15T12:00:00Z'))
+      GetStateWithForecast(undefined, 40, false, null, false, new Date('2025-08-15T12:00:00Z'))
+    ).toBe(true);
+    resetControlStateForTest();
+    jest.spyOn(sun, 'getSunElevationUTC').mockReturnValue(5); // sun down
+    expect(
+      GetStateWithForecast(undefined, 40, false, null, false, new Date('2025-08-15T02:00:00Z'))
     ).toBe(false);
+    resetControlStateForTest();
+    // forced overrides even in dark
     expect(
-      GetStateWithForecast(undefined, 48, false, null, true, new Date('2025-08-15T02:00:00Z'))
-    ).toBe(false); // power 0 > required 0 ? false (0>0 false)
-    // with heaterOn hysteresis, undefined 0 behaves as 0, but heaterOn would be 0+2496>0 true if legionella? Check legionella path still does power check
+      GetStateWithForecast(undefined, 40, false, null, true, new Date('2025-08-15T02:00:00Z'))
+    ).toBe(true);
+    expect(getControlStateForTest()).toBe(PowerState.TurningOn);
   });
 
   it('pluggable provider – same control works with any Forecast shape', () => {
@@ -91,15 +113,15 @@ describe('GetStateWithForecast – generic provider', () => {
       forecasts: [
         {
           period_start: new Date('2025-08-15T10:00:00Z'),
-          period_end: new Date('2025-08-15T10:30:00Z'),
+          period_end: new Date('2025-08-15T11:00:00Z'),
           pv_estimate: 6,
         },
       ],
-      fetchedAt: new Date(),
+      fetchedAt: new Date('2025-08-15T10:00:00Z'),
       provider: 'solcast',
     };
     const at = new Date('2025-08-15T10:15:00Z');
     jest.spyOn(sun, 'getSunElevationUTC').mockReturnValue(30);
-    expect(GetStateWithForecast(1000, 48, false, solcastLike, false, at)).toBe(true);
+    expect(GetStateWithForecast(1000, 40, false, solcastLike, false, at)).toBe(true);
   });
 });
