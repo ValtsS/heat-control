@@ -12,7 +12,6 @@ const HYSTERESIS_DEG = parseNum(process.env.HYSTERESIS_DEG, 1);
 const MORNING_TEMP = parseNum(process.env.MORNING_TEMP, 40);
 const MORNING_START_HOUR = parseIntVal(process.env.MORNING_START_HOUR, 6);
 const MORNING_END_HOUR = parseIntVal(process.env.MORNING_END_HOUR, 10);
-const MORNING_AVAIL_W = parseNum(process.env.MORNING_AVAIL_W, 800);
 
 // generic forecast types – avoid circular import, use minimal shape
 type ForecastForControl = {
@@ -103,7 +102,8 @@ export function GetStateWithForecast(
     // stale/missing forecast → fall back to raw sun elevation
     const solarOk = plan.stale ? elevation >= MinElevDeg : plan.solarToday > 0;
 
-    // daily hot-water guarantee: cold morning must heat (hot water every day) – hard override
+    // daily hot-water guarantee: cold morning must heat (hot water every day) – hard override,
+    // may import from grid up to MORNING_TEMP
     const hourLocal = at.getHours();
     const needsMorning =
       temperature < MORNING_TEMP &&
@@ -111,7 +111,7 @@ export function GetStateWithForecast(
       hourLocal <= MORNING_END_HOUR;
 
     if (needsMorning) {
-      enableHeater = solarOk || avail > MORNING_AVAIL_W;
+      enableHeater = true;
     } else {
       enableHeater = temperature < plan.requiredNow - HYSTERESIS_DEG && solarOk;
     }

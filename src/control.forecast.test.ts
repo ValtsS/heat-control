@@ -51,6 +51,22 @@ describe('GetStateWithForecast – tank horizon planner', () => {
     expect(getControlStateForTest()).toBe(PowerState.TurningOn);
   });
 
+  it('morning cold → always heat even importing (negative power)', () => {
+    const fc = makeForecast([11, 11]);
+    const at = new Date('2025-08-15T07:00:00Z');
+    at.setHours(7); // local morning
+    jest.spyOn(sun, 'getSunElevationUTC').mockReturnValue(2); // sun not up
+    // T=35 cold morning, phase importing (-800) → must still heat
+    expect(GetStateWithForecast(-800, 35, false, fc, false, at)).toBe(true);
+    expect(getControlStateForTest()).toBe(PowerState.TurningOn);
+    resetControlStateForTest();
+    // but after morning window (11:00 local), normal plan applies → no heat with negative power
+    const noon = new Date('2025-08-15T09:00:00Z');
+    noon.setHours(11); // local 11 → outside window
+    jest.spyOn(sun, 'getSunElevationUTC').mockReturnValue(2); // still dark
+    expect(GetStateWithForecast(-800, 35, false, fc, false, noon)).toBe(false);
+  });
+
   it('late day, poor tomorrow → bank: heat at higher tank temp than good tomorrow', () => {
     const at = new Date('2025-08-15T18:00:00Z');
     const fcPoor = makeForecast([11, 2]); // tomorrow poor → bank to ~62

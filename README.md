@@ -43,17 +43,17 @@ requiredNow   = targetEod - (solarToday - lossToEod)/EPD            // temp we m
 if legionellaForced → enable = true            // unconditional, may draw grid
 else:
   plan   = planTank(at, T, forecast, defaultTankConfig())
-  solarOk = plan.stale ? elevation >= 12       // offline: raw sun elevation
-                       : plan.solarToday > 0   // fresh forecast: energy still coming (handles clouds)
-  if T<40 && 6<=localHour<=10:                 // daily 40 °C guarantee – hot water every morning
-    enable = solarOk || avail > 800
+  solarOk = plan.stale ? elevation >= MIN_ELEV_DEG   // offline: raw sun elevation
+                       : plan.solarToday > 0         // fresh forecast: energy still coming
+  if T < MORNING_TEMP && MORNING_START_HOUR<=localHour<=MORNING_END_HOUR:
+    enable = true                                 // daily hot-water guarantee – may import
   else:
     enable = T < plan.requiredNow - HYSTERESIS_DEG && solarOk
 ```
 
-- `avail = power + (heaterOn ? 2496 : 0)`.
-- 15 s `StabilizationTime` (`process.hrtime.bigint()`) + state machine `Undefined→TurningOn→On→TurningOff→Off` unchanged.
-- `T=NaN` → `enable=false`.
+- `enableHeater` in the normal path is driven **only** by the tank plan (`requiredNow`) + solar gate — there is **no instantaneous surplus gate**. The plan defers when the forecast is good (morning `requiredNow` low → heat later at peak / export-limited surplus), and heats now when the plan says we can't wait. When heating we may import the shortfall on poor weather — acceptable because the plan only forces it when solar won't cover the need.
+- Boiler is **2.4 kW single-phase**; `active_grid_B_power_W` is the net surplus on that phase (~3.6-4 kW max), so running the heater is exactly the right decision signal. `solarToday/solarTomorrow` are total-array **energy (kWh)** and are correct for tank-energy planning regardless of phase.
+- 15 s `StabilizationTime` (`process.hrtime.bigint()`) + state machine unchanged. `T=NaN` → `enable=false`.
 
 ### 4. Offline / WiFi down `src/power.ts`
 
@@ -99,9 +99,8 @@ MAX_BANK_DEG=7
 TANK_MAX_TEMP=63             # thermostat
 HYSTERESIS_DEG=1
 MIN_ELEV_DEG=12              # offline sun gate
-MORNING_TEMP=40              # daily hot-water guarantee
+MORNING_TEMP=40              # daily hot-water guarantee (may import)
 MORNING_START_HOUR=6 MORNING_END_HOUR=10
-MORNING_AVAIL_W=800
 ```
 
 Durations are human-readable (`"1h"`, `"7d"`, `"20m"`, `"90s"`, plain ms) via `src/config.ts:parseDuration`.
