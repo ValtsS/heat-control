@@ -99,10 +99,10 @@ export class SqliteForecastStore implements ForecastStore {
   async lastHot(): Promise<Date | null> {
     await this.ready;
     return new Promise((resolve, reject) => {
-      this.db.get(`SELECT last_hot as last_hot FROM legionella WHERE id=1`, (err, row: any) => {
+      this.db.get(`SELECT last_hot as last_hot FROM legionella WHERE id=1`, (err, row) => {
         if (err) return reject(err);
-        if (!row || row.last_hot == null) return resolve(null);
-        resolve(new Date(row.last_hot));
+        if (!row || (row as { last_hot: number | null }).last_hot == null) return resolve(null);
+        resolve(new Date((row as { last_hot: number }).last_hot));
       });
     });
   }
@@ -138,10 +138,16 @@ export class SqliteForecastStore implements ForecastStore {
   async lastSample(): Promise<Sample | null> {
     await this.ready;
     return new Promise((resolve, reject) => {
-      this.db.get(`SELECT at, temp, power, heat_on FROM stats WHERE id=1`, (err, row: any) => {
+      this.db.get(`SELECT at, temp, power, heat_on FROM stats WHERE id=1`, (err, row) => {
         if (err) return reject(err);
         if (!row) return resolve(null);
-        resolve({ at: new Date(row.at), temp: row.temp, power: row.power, heatOn: row.heat_on === 1 });
+        const r = row as { at: number; temp: number; power: number; heat_on: number };
+        resolve({
+          at: new Date(r.at),
+          temp: r.temp,
+          power: r.power,
+          heatOn: r.heat_on === 1,
+        });
       });
     });
   }

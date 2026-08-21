@@ -1,5 +1,4 @@
 import { Forecast, ForecastProvider } from './types';
-import { ForecastProcessor } from './processor';
 
 // Generic stub – plug real Solcast later without touching callers.
 // Master had src/solcast/forecast.ts with period/PT30M json – we reuse that parsing.

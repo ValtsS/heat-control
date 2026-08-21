@@ -97,7 +97,7 @@ export function GetStateWithForecast(
     enableHeater = true;
   } else {
     // tank horizon planner – prognosis of how hot we must be (banks for poor tomorrow)
-    const plan = planTank(at, temperature, forecast as any, defaultTankConfig());
+    const plan = planTank(at, temperature, forecast, defaultTankConfig());
 
     const hourLocal = at.getHours();
     const morning = hourLocal >= MORNING_START_HOUR && hourLocal <= MORNING_END_HOUR;

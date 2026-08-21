@@ -85,11 +85,16 @@ app.get('/debug', async (_req: Request, res: Response) => {
     forecastStore.lastSample(),
   ]);
   const temp = lastSample?.temp ?? NaN;
-  const plan = planTank(at, temp, forecast as any, defaultTankConfig());
+  const plan = planTank(at, temp, forecast, defaultTankConfig());
   res.json({
     at: at.toISOString(),
     lastSample: lastSample
-      ? { at: lastSample.at.toISOString(), temp: lastSample.temp, power: lastSample.power, heatOn: lastSample.heatOn }
+      ? {
+          at: lastSample.at.toISOString(),
+          temp: lastSample.temp,
+          power: lastSample.power,
+          heatOn: lastSample.heatOn,
+        }
       : null,
     power: { watts: power.power ?? null, estimated: power.estimated, source: power.source },
     controlState: getControlStateForTest(),

@@ -32,10 +32,9 @@ function localMorning(hour: number): Date {
 }
 
 describe('GetStateWithForecast – forecast-driven decision', () => {
-  let hrtimeSpy: jest.SpyInstance;
   beforeEach(() => {
     resetControlStateForTest();
-    hrtimeSpy = jest.spyOn(process.hrtime, 'bigint').mockReturnValue(BigInt(1_000_000_000_000));
+    jest.spyOn(process.hrtime, 'bigint').mockReturnValue(BigInt(1_000_000_000_000));
     jest.spyOn(sun, 'getSunElevationUTC').mockReturnValue(30);
     jest.spyOn(console, 'log').mockImplementation(() => {});
   });

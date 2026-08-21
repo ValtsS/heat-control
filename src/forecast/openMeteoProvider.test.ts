@@ -1,19 +1,12 @@
 import { OpenMeteoProvider } from './openMeteoProvider';
-
-function mockFetchJson(json: any) {
-  global.fetch = jest.fn().mockResolvedValue({
-    ok: true,
-    json: async () => json,
-  } as any);
-}
+import { SolcastProvider } from './solcastProvider';
 
 afterEach(() => jest.restoreAllMocks());
 
 describe('OpenMeteoProvider generic', () => {
   it('fetches and sums 2 arrays (3kW E +10kW S)', async () => {
     // two calls – we mock fetch to return different irradiance per array via URL inspect
-    const responses: Record<string, any> = {};
-    // simple: both return same time series
+    // both return same-shaped hourly with per-call irradiance
     const base = {
       hourly: {
         time: ['2025-08-15T10:00:00Z', '2025-08-15T11:00:00Z'],
@@ -21,14 +14,14 @@ describe('OpenMeteoProvider generic', () => {
       },
     };
     let call = 0;
-    global.fetch = jest.fn().mockImplementation((url: string) => {
+    global.fetch = jest.fn().mockImplementation(() => {
       call++;
       // first array is E 3kWp, second S 10kWp – return slightly different irradiance to prove sum
       const irr = call === 1 ? [500, 800] : [600, 900];
       return Promise.resolve({
         ok: true,
         json: async () => ({ hourly: { time: base.hourly.time, global_tilted_irradiance: irr } }),
-      } as any);
+      });
     });
 
     const p = new OpenMeteoProvider({
@@ -57,26 +50,23 @@ describe('OpenMeteoProvider generic', () => {
   });
 
   it('throws on non-ok response', async () => {
-    global.fetch = jest
-      .fn()
-      .mockResolvedValue({ ok: false, status: 500, text: async () => 'err' } as any);
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      text: async () => 'err',
+    });
     const p = new OpenMeteoProvider({ arrays: [{ kWp: 1, tilt: 30, azimuth: 0 }] });
     await expect(p.fetchForecast()).rejects.toThrow('OpenMeteo 500');
   });
 });
 
 describe('ForecastProvider interface – solcast pluggable', () => {
-  it('can swap provider without changing caller', async () => {
-    // @ts-ignore NodeNext needs .js but babel handles bare
-    const { SolcastProvider } = await import('./solcastProvider');
-    const stub: any = {
-      name: 'stub',
-      isConfigured: () => true,
-      fetchForecast: async () => ({ forecasts: [], fetchedAt: new Date(), provider: 'stub' }),
-    };
-    const p: import('./types').ForecastProvider = stub;
-    expect(p.name).toBe('stub');
-    const f = await p.fetchForecast();
-    expect(f.provider).toBe('stub');
+  it('can swap provider without changing caller (offline parseJson)', () => {
+    const f = SolcastProvider.parseJson(
+      JSON.stringify({ forecasts: [{ pv_estimate: 2.5, period_end: '2025-08-15T10:30:00Z' }] })
+    );
+    expect(f.provider).toBe('solcast');
+    expect(f.forecasts).toHaveLength(1);
+    expect(f.forecasts[0].pv_estimate).toBe(2.5);
   });
 });

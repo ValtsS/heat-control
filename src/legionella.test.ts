@@ -1,4 +1,4 @@
-import { LegionellaService, LEGIONELLA_INTERVAL_MS } from './legionella';
+import { LegionellaService } from './legionella';
 import { MemoryForecastStore } from './forecast/cache';
 
 describe('LegionellaService – 60C/7d', () => {

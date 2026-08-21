@@ -1,13 +1,14 @@
 import { PowerService } from './power';
 import { MemoryForecastStore } from './forecast/cache';
+import { FluxClient } from './fluxClient';
 
-function makeFlux(power: number | undefined, shouldThrow = false) {
+function makeFlux(power: number | undefined, shouldThrow = false): FluxClient {
   return {
     getPower: jest.fn().mockImplementation(async () => {
       if (shouldThrow) throw new Error('wifi down');
       return power;
     }),
-  } as any;
+  } as unknown as FluxClient;
 }
 
 describe('PowerService – wifi down fallback', () => {
