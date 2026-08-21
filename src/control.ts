@@ -14,7 +14,6 @@ export type ControlData = {
   requiredpower: number;
 };
 
-
 /*
 export const DefaultSettings: ControlData[] = [
   {
@@ -41,13 +40,11 @@ export const DefaultSettings: ControlData[] = [
   {
     temperature: -5.0,
     requiredpower: -2000,
-  }
-  ,
+  },
   {
     temperature: 48.0,
     requiredpower: 0,
-  }
-  ,
+  },
   {
     temperature: 50.0,
     requiredpower: 200,
@@ -65,7 +62,6 @@ export const DefaultSettings: ControlData[] = [
     requiredpower: 3550,
   },
 ];
-
 
 /*
 
@@ -111,6 +107,18 @@ let currentState: PowerState = PowerState.Undefined;
 let retainstateUntil: bigint = BigInt(0);
 // 15 secods
 const StabilizationTime = BigInt(1000000000 * 15);
+
+export const HEATER_WATTS = HEATER_Watts;
+export const SUN_CONFIG = { LAT, LON, MinElevDeg, MinutesToMidday };
+
+export function resetControlStateForTest(): void {
+  currentState = PowerState.Undefined;
+  retainstateUntil = BigInt(0);
+}
+
+export function getControlStateForTest(): PowerState {
+  return currentState;
+}
 
 function State2Bool(state: PowerState): boolean {
   switch (state) {
@@ -166,11 +174,15 @@ export function GetState(power: number, temperature: number, heaterOn: boolean):
   const requiredpower = calculateRequiredPower(temperature, DefaultSettings);
   let enableHeater = power > requiredpower - (heaterOn ? HEATER_Watts : 0);
 
-  const elevation = getSunElevationUTC(LAT,LON);
+  const elevation = getSunElevationUTC(LAT, LON);
 
   const minutesToMidDay = Math.abs(minutesFromSolarMiddayUTC(LON));
 
-  enableHeater = enableHeater && ((elevation >= MinElevDeg) || (power + (heaterOn ? HEATER_Watts : 0)) > 2000 || minutesToMidDay < MinutesToMidday );
+  enableHeater =
+    enableHeater &&
+    (elevation >= MinElevDeg ||
+      power + (heaterOn ? HEATER_Watts : 0) > 2000 ||
+      minutesToMidDay < MinutesToMidday);
 
   console.log(
     `Avail power  = ${
