@@ -3,15 +3,19 @@ import { getSunElevationUTC } from './sun';
 import { planTank, defaultTankConfig } from './tank';
 import { parseNum, parseIntVal } from './config';
 
-const HEATER_Watts = 2400 * 1.04; // intentionally lower to have hysteresis
+const HEATER_WATTS_VAL = parseNum(process.env.HEATER_WATTS, 2496); // heater draw (env)
 const LAT = parseNum(process.env.LAT, 57);
 const LON = parseNum(process.env.LON, 25);
-const MinElevDeg = parseNum(process.env.MIN_ELEV_DEG, 12); // offline solar gate (no forecast)
+const MinElevDeg = parseNum(process.env.MIN_ELEV_DEG, 12); // offline sun gate (no forecast)
 const HYSTERESIS_DEG = parseNum(process.env.HYSTERESIS_DEG, 1);
 // daily hot-water guarantee (morning) – configurable
 const MORNING_TEMP = parseNum(process.env.MORNING_TEMP, 40);
+const MORNING_POOR_TEMP = parseNum(process.env.MORNING_POOR_TEMP, 45);
 const MORNING_START_HOUR = parseIntVal(process.env.MORNING_START_HOUR, 6);
 const MORNING_END_HOUR = parseIntVal(process.env.MORNING_END_HOUR, 10);
+// below this much remaining solar today (total-array kWh) we don't chase the target –
+// crap days heat to bare minimum only (morning floor + legionella), not all day
+const MIN_SOLAR_TODAY_KWH = parseNum(process.env.MIN_SOLAR_TODAY_KWH, 5);
 
 // generic forecast types – avoid circular import, use minimal shape
 type ForecastForControl = {
@@ -33,7 +37,7 @@ let retainstateUntil: bigint = BigInt(0);
 // 15 secods
 const StabilizationTime = BigInt(1000000000 * 15);
 
-export const HEATER_WATTS = HEATER_Watts;
+export const HEATER_WATTS = HEATER_WATTS_VAL;
 
 export function resetControlStateForTest(): void {
   currentState = PowerState.Undefined;
@@ -83,42 +87,47 @@ export function GetStateWithForecast(
 ): boolean {
   if (process.hrtime.bigint() < retainstateUntil) return State2Bool(currentState);
 
-  // handle undefined power (wifi down) – use estimated 0 here; caller should pass estimated value via power
   const p = power ?? 0;
-  const avail = p + (heaterOn ? HEATER_Watts : 0);
   const elevation = getSunElevationUTC(LAT, LON);
   let enableHeater: boolean;
 
   // 60C legionella override – force regardless of power/forecast/sun (draws grid)
   if (legionellaForced) {
-    console.log(`LEGIONELLA forced avail=${avail} actual=${p} elev=${elevation.toFixed(1)}`);
+    console.log(`LEGIONELLA forced actual=${p} elev=${elevation.toFixed(1)}`);
     enableHeater = true;
   } else {
-    // tank horizon planner – how hot we need to be now to hit end-of-day target
-    // (banks extra when tomorrow's solar is poor). Stale forecast → treated as no-data.
+    // tank horizon planner – prognosis of how hot we must be (banks for poor tomorrow)
     const plan = planTank(at, temperature, forecast as any, defaultTankConfig());
 
-    // solar gate: fresh forecast → heat only if energy still coming today (handles clouds);
-    // stale/missing forecast → fall back to raw sun elevation
-    const solarOk = plan.stale ? elevation >= MinElevDeg : plan.solarToday > 0;
-
-    // daily hot-water guarantee: cold morning must heat (hot water every day) – hard override,
-    // may import from grid up to MORNING_TEMP
     const hourLocal = at.getHours();
-    const needsMorning =
-      temperature < MORNING_TEMP &&
-      hourLocal >= MORNING_START_HOUR &&
-      hourLocal <= MORNING_END_HOUR;
+    const morning = hourLocal >= MORNING_START_HOUR && hourLocal <= MORNING_END_HOUR;
+    const poor = plan.bankDelta > 0; // tomorrow can't meet its own need (worse than today)
+    const needsMorningFloor = temperature < MORNING_TEMP;
+    const needsMorningPoor = temperature < MORNING_POOR_TEMP;
 
-    if (needsMorning) {
+    if (morning && needsMorningFloor) {
+      // hard daily floor: hot water every morning – may import
       enableHeater = true;
+    } else if (morning && poor && needsMorningPoor) {
+      // poor tomorrow → import in the morning (near use, minimal overnight loss) to bare minimum
+      enableHeater = true;
+    } else if (plan.stale) {
+      // offline / no forecast → sun-elevation gate toward requiredNow
+      enableHeater = elevation >= MinElevDeg && temperature < plan.requiredNow - HYSTERESIS_DEG;
+    } else if (poor && plan.bankable) {
+      // tomorrow worse AND today has surplus solar to bank with → heat toward requiredNow
+      enableHeater = temperature < plan.requiredNow - HYSTERESIS_DEG;
+    } else if (plan.solarToday >= MIN_SOLAR_TODAY_KWH) {
+      // decent day: use the solar we generate rather than export – heat toward no-bank target
+      enableHeater = temperature < plan.requiredNoBank - HYSTERESIS_DEG;
     } else {
-      enableHeater = temperature < plan.requiredNow - HYSTERESIS_DEG && solarOk;
+      // crap day / no meaningful solar: don't chase target all day – bare minimum only
+      enableHeater = false;
     }
   }
 
   console.log(
-    `Avail power  = ${avail}  actual = ${p} currentTState=${currentState} enableHeater = ${enableHeater} Elevation = ${elevation.toFixed(
+    `actual=${p} currentTState=${currentState} enableHeater = ${enableHeater} Elevation = ${elevation.toFixed(
       1
     )} legionella=${legionellaForced} forecast=${forecast?.provider ?? 'none'}`
   );

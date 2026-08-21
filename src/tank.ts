@@ -14,11 +14,13 @@ export type TankConfig = {
 };
 
 export type TankPlan = {
-  targetEod: number; // where we want the tank at midnight
-  requiredNow: number; // current temperature needed to hit targetEod by midnight
-  solarToday: number; // kWh still coming today (from `at` to midnight)
-  solarTomorrow: number; // kWh forecast for the next 24h
+  targetEod: number; // where we want the tank at midnight (incl. bank)
+  requiredNow: number; // temperature needed now to hit targetEod by midnight (incl. bank)
+  requiredNoBank: number; // temperature needed now to hit targetTemp (no bank) by midnight
+  solarToday: number; // kWh still coming today (from `at` to midnight) – total array
+  solarTomorrow: number; // kWh forecast for the next 24h – total array
   bankDelta: number; // °C we're preheating for tomorrow
+  bankable: boolean; // tomorrow worse AND today's remaining solar can cover the bank
   stale: boolean; // forecast missing or older than forecastMaxAgeMs
 };
 
@@ -63,10 +65,17 @@ export function planTank(
   const needTomorrow =
     (cfg.targetTemp - cfg.minTemp) * EPD + cfg.tankLossKwhPerDay + cfg.usageKwhPerDay;
 
-  // bank only when we have a forecast that shows tomorrow won't cover the need
+  const shortfall = fc ? Math.max(0, needTomorrow - solarTomorrow) : 0;
+
+  // bank only when tomorrow is worse (can't meet its own need) AND today's remaining
+  // solar actually exceeds what's needed to reach the no-bank target – i.e. there is
+  // real surplus solar to bank with (otherwise banking would just be grid import)
   let bankDelta = 0;
-  if (fc && solarTomorrow < needTomorrow) {
-    bankDelta = Math.min((needTomorrow - solarTomorrow) / EPD, cfg.maxBankDeg);
+  let bankable = false;
+  const energyToTarget = (cfg.targetTemp - tempNow) * EPD + lossToEod;
+  if (fc && shortfall > 0) {
+    bankDelta = Math.min(shortfall / EPD, cfg.maxBankDeg);
+    bankable = solarToday > energyToTarget;
   }
   // thermostat caps the tank (never assume above maxTemp) – still ≥ legionella 60 °C
   const ceiling = Math.min(cfg.maxTemp, 65);
@@ -74,6 +83,20 @@ export function planTank(
 
   // temp needed now to land at targetEod by midnight given remaining solar & loss
   const requiredNow = targetEod - (solarToday - lossToEod) / EPD;
+  // temp needed now to land at plain targetTemp (no bank) by midnight
+  const requiredNoBank = Math.min(
+    Math.max(cfg.targetTemp - (solarToday - lossToEod) / EPD, cfg.minTemp),
+    ceiling
+  );
 
-  return { targetEod, requiredNow, solarToday, solarTomorrow, bankDelta, stale };
+  return {
+    targetEod,
+    requiredNow,
+    requiredNoBank,
+    solarToday,
+    solarTomorrow,
+    bankDelta,
+    bankable,
+    stale,
+  };
 }

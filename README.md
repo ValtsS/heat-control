@@ -34,26 +34,32 @@ requiredNow   = targetEod - (solarToday - lossToEod)/EPD            // temp we m
 
 - **Good today & tomorrow** → big `solarToday` → `requiredNow` low → no morning heat (defer to midday).
 - **Late day** → `solarToday` small → `requiredNow` climbs → heats on surplus to keep tank hot through evening (usage + overnight loss).
-- **Poor tomorrow** → `bankDelta>0` → `targetEod`/`requiredNow` raised → preheats (banks) on today's surplus instead of buying energy tomorrow.
-- **Stale/missing forecast** (`at - fetchedAt > FORECAST_MAX_AGE_MS`) → `solarToday=0` → conservative, sun-gate only.
+- **Poor tomorrow** → `bankDelta>0` → `targetEod`/`requiredNow` raised → **banks** — but only via `bankable` (today's remaining solar exceeds today's own need), so banking uses real solar surplus, never night grid import.
+- **Stale/missing forecast** (`at - fetchedAt > FORECAST_MAX_AGE`) → `solarToday=0` → conservative, sun-gate only.
 
 ### 3. Decision `control.ts:GetStateWithForecast`
 
 ```
-if legionellaForced → enable = true            // unconditional, may draw grid
+if legionellaForced → enable = true            // unconditional, may draw grid (60 °C / 7 d)
 else:
-  plan   = planTank(at, T, forecast, defaultTankConfig())
-  solarOk = plan.stale ? elevation >= MIN_ELEV_DEG   // offline: raw sun elevation
-                       : plan.solarToday > 0         // fresh forecast: energy still coming
-  if T < MORNING_TEMP && MORNING_START_HOUR<=localHour<=MORNING_END_HOUR:
-    enable = true                                 // daily hot-water guarantee – may import
-  else:
-    enable = T < plan.requiredNow - HYSTERESIS_DEG && solarOk
+  plan   = planTank(at, T, forecast, cfg)
+  morning = MORNING_START_HOUR <= localHour <= MORNING_END_HOUR
+  poor    = plan.bankDelta > 0                 // tomorrow worse (can't meet its need)
+
+  if morning && T < MORNING_TEMP:              enable = true      // hard daily floor (may import)
+  elif morning && poor && T < MORNING_POOR_TEMP: enable = true    // poor tomorrow → morning import to bare min
+  elif plan.stale:                             enable = elev >= MIN_ELEV_DEG && T < requiredNow - HYS   // offline sun gate
+  elif poor && plan.bankable:                  enable = T < requiredNow - HYS   // bank with today's surplus solar
+  elif plan.solarToday >= MIN_SOLAR_TODAY_KWH: enable = T < requiredNoBank - HYS // decent day: use solar, don't export
+  else:                                        enable = false    // crap day: bare minimum only
 ```
 
-- `enableHeater` in the normal path is driven **only** by the tank plan (`requiredNow`) + solar gate — there is **no instantaneous surplus gate**. The plan defers when the forecast is good (morning `requiredNow` low → heat later at peak / export-limited surplus), and heats now when the plan says we can't wait. When heating we may import the shortfall on poor weather — acceptable because the plan only forces it when solar won't cover the need.
-- Boiler is **2.4 kW single-phase**; `active_grid_B_power_W` is the net surplus on that phase (~3.6-4 kW max), so running the heater is exactly the right decision signal. `solarToday/solarTomorrow` are total-array **energy (kWh)** and are correct for tank-energy planning regardless of phase.
-- 15 s `StabilizationTime` (`process.hrtime.bigint()`) + state machine unchanged. `T=NaN` → `enable=false`.
+- **Winter (crap days, ~100 W phase):** `solarToday` below `MIN_SOLAR_TODAY_KWH` → no all-day chase. Morning imports to `MORNING_POOR_TEMP` (45, near use → minimal overnight loss); legionella forces 60 °C ~1×/7 d. No night import to "bank" a poor tomorrow.
+- **Autumn decent (Oct 31, 10 kWh):** `solarToday` ≥ 5 → heat toward `requiredNoBank` during the day, using the solar we generate rather than exporting (imports the ~1.2 kW shortfall on the single phase).
+- **Spring/summer good:** `poor=false` in the morning → defer; `requiredNoBank` stays low while solar covers the target → heater idles; midday export surplus absorbed.
+- **Banking** happens only when tomorrow is worse **and** today's remaining solar exceeds what's needed to reach the no-bank target (`plan.bankable`) — i.e. bank from real solar surplus, never from grid at night.
+- Boiler is **2.4 kW single-phase**; `active_grid_B_power_W` is that phase's net surplus (~3.6-4 kW max). `HEATER_WATTS` is env-configurable.
+- 15 s `StabilizationTime` + state machine unchanged. `T=NaN` → `enable=false`.
 
 ### 4. Offline / WiFi down `src/power.ts`
 
@@ -99,8 +105,11 @@ MAX_BANK_DEG=7
 TANK_MAX_TEMP=63             # thermostat
 HYSTERESIS_DEG=1
 MIN_ELEV_DEG=12              # offline sun gate
-MORNING_TEMP=40              # daily hot-water guarantee (may import)
+MORNING_TEMP=40              # hard daily floor (may import)
+MORNING_POOR_TEMP=45         # poor-tomorrow morning import floor
 MORNING_START_HOUR=6 MORNING_END_HOUR=10
+MIN_SOLAR_TODAY_KWH=5        # below this, crap day: bare minimum only
+HEATER_WATTS=2496            # heater draw (single phase)
 ```
 
 Durations are human-readable (`"1h"`, `"7d"`, `"20m"`, `"90s"`, plain ms) via `src/config.ts:parseDuration`.
