@@ -44,7 +44,7 @@ if legionellaForced → enable = true            // unconditional, may draw grid
 else:
   plan   = planTank(at, T, forecast, cfg)
   morning = MORNING_START_HOUR <= localHour <= MORNING_END_HOUR
-  poor    = plan.bankDelta > 0                 // tomorrow worse (can't meet its need)
+  poor    = plan.poor                          // tomorrow worse (can't meet its need)
 
   if morning && T < MORNING_TEMP:              enable = true      // hard daily floor (may import)
   elif morning && poor && T < MORNING_POOR_TEMP: enable = true    // poor tomorrow → morning import to bare min
@@ -54,8 +54,8 @@ else:
   else:                                        enable = false    // crap day: bare minimum only
 ```
 
-- **Winter (crap days, ~100 W phase):** `solarToday` below `MIN_SOLAR_TODAY_KWH` → no all-day chase. Morning imports to `MORNING_POOR_TEMP` (45, near use → minimal overnight loss); legionella forces 60 °C ~1×/7 d. No night import to "bank" a poor tomorrow.
-- **Autumn decent (Oct 31, 10 kWh):** `solarToday` ≥ 5 → heat toward `requiredNoBank` during the day, using the solar we generate rather than exporting (imports the ~1.2 kW shortfall on the single phase).
+- **Winter (crap days, ~20 W boiler-phase):** `solarToday` (boiler-phase kWh) below `MIN_SOLAR_TODAY_KWH` → no all-day chase. Morning imports to `MORNING_POOR_TEMP` (45, near use → minimal overnight loss); legionella forces 60 °C ~1×/7 d. No night import to "bank" a poor tomorrow.
+- **Autumn decent (Oct 31, 10 kWh total-array ≈ 3.3 boiler-phase):** `solarToday` (boiler-phase) ≥ 5 → heat toward `requiredNoBank` during the day, using the solar we generate rather than exporting (imports the ~1.2 kW shortfall on the single phase).
 - **Spring/summer good:** `poor=false` in the morning → defer; `requiredNoBank` stays low while solar covers the target → heater idles; midday export surplus absorbed.
 - **Banking** happens only when tomorrow is worse **and** today's remaining solar exceeds what's needed to reach the no-bank target (`plan.bankable`) — i.e. bank from real solar surplus, never from grid at night.
 - Boiler is **2.4 kW single-phase**; `active_grid_B_power_W` is that phase's net surplus (~3.6-4 kW max). `HEATER_WATTS` is env-configurable.
@@ -108,7 +108,8 @@ MIN_ELEV_DEG=12              # offline sun gate
 MORNING_TEMP=40              # hard daily floor (may import)
 MORNING_POOR_TEMP=45         # poor-tomorrow morning import floor
 MORNING_START_HOUR=6 MORNING_END_HOUR=10
-MIN_SOLAR_TODAY_KWH=5        # below this, crap day: bare minimum only
+MIN_SOLAR_TODAY_KWH=5        # below this, crap day: bare minimum only (BOILER-phase kWh)
+BOILER_PHASE_SHARE=0.33      # boiler sees ~1/3 of the 13 kWp total array
 HEATER_WATTS=2496            # heater draw (single phase)
 ```
 

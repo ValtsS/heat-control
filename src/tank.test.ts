@@ -10,6 +10,7 @@ const CFG: TankConfig = {
   maxBankDeg: 7,
   forecastMaxAgeMs: 6 * 3600 * 1000,
   maxTemp: 63,
+  boilerPhaseShare: 0.33,
 };
 
 // hourly forecast from 05Z today, 3 days: first two arrays = today, third = tomorrow
@@ -36,14 +37,17 @@ function req(plan: TankPlan) {
 }
 
 describe('planTank – horizon planner', () => {
-  it('good today + good tomorrow → morning requiredNow very low (defer)', () => {
+  it('good today + good tomorrow → morning requiredNow low (defer), no bank', () => {
     const at = new Date('2025-08-15T07:00:00Z');
-    const fc = forecastFrom([11, 11]); // today 11, tomorrow 11
+    const fc = forecastFrom([11, 11]); // today 11, tomorrow 11 (total array)
     const plan = planTank(at, 45, fc, CFG);
+    // boiler-phase share only reaches the heater
     expect(plan.solarToday).toBeGreaterThan(0);
-    expect(plan.bankDelta).toBeLessThan(4); // tomorrow covers need
-    // requiredNow well below current tank temp → no morning heating
-    expect(req(plan)).toBeLessThan(40);
+    expect(plan.solarToday).toBeLessThan(4);
+    // tomorrow's boiler share can't cover need → poor, but today has no surplus → no bank
+    expect(plan.bankDelta).toBe(0);
+    expect(plan.bankable).toBe(false);
+    expect(plan.targetEod).toBe(CFG.targetTemp);
     expect(plan.stale).toBe(false);
   });
 
@@ -51,18 +55,20 @@ describe('planTank – horizon planner', () => {
     const at = new Date('2025-08-15T18:00:00Z');
     const fc = forecastFrom([11, 11]);
     const plan = planTank(at, 57, fc, CFG);
-    // few kWh left today → requiredNow climbs toward target → evening hold keeps tank hot
-    expect(plan.solarToday).toBeLessThan(4);
+    // few boiler-phase kWh left today → requiredNow climbs toward target
+    expect(plan.solarToday).toBeLessThan(2);
     expect(req(plan)).toBeGreaterThan(45);
   });
 
-  it('bad tomorrow → bankDelta raises target (preheat today)', () => {
+  it('bad tomorrow → not bankable without surplus today, target stays at base', () => {
     const at = new Date('2025-08-15T07:00:00Z');
-    const fc = forecastFrom([11, 2]); // tomorrow only 2 kWh
+    const fc = forecastFrom([11, 2]); // tomorrow only 2 kWh total-array
     const plan = planTank(at, 45, fc, CFG);
     expect(plan.solarTomorrow).toBeLessThan(5);
-    expect(plan.bankDelta).toBeGreaterThan(0);
-    expect(plan.targetEod).toBeGreaterThan(CFG.targetTemp);
+    // tomorrow short, but today's boiler-phase surplus is thin → no bank to avoid grid import
+    expect(plan.bankDelta).toBe(0);
+    expect(plan.bankable).toBe(false);
+    expect(plan.targetEod).toBe(CFG.targetTemp);
   });
 
   it('bankable false when no solar today even if tank above target (night bug)', () => {
@@ -70,15 +76,17 @@ describe('planTank – horizon planner', () => {
     const at = new Date('2025-08-15T21:00:00Z'); // night, ~0 solar left today
     const fc = forecastFrom([0, 1]); // today 0 (night), poor tomorrow
     const plan = planTank(at, 60, fc, CFG);
-    expect(plan.bankDelta).toBeGreaterThan(0); // still thinks tomorrow poor
-    expect(plan.bankable).toBe(false); // but no solar surplus to bank with → off
+    expect(plan.bankDelta).toBe(0); // no surplus to bank with → no bank
+    expect(plan.bankable).toBe(false); // → off
   });
 
-  it('bankable true with real solar surplus (tank below target)', () => {
+  it('bankable true with real surplus today (tank below target, sunny)', () => {
     const at = new Date('2025-08-15T07:00:00Z');
-    const fc = forecastFrom([11, 2]); // plenty today, poor tomorrow
+    const fc = forecastFrom([30, 2]); // plenty total-array today, poor tomorrow
     const plan = planTank(at, 45, fc, CFG);
+    // 30 total-array → ~9.9 boiler-phase today, well above need → surplus to bank with
     expect(plan.bankable).toBe(true);
+    expect(plan.bankDelta).toBeGreaterThan(0);
   });
 
   it('stale forecast (older than max age) → treated as no-data, no bank, requiredNow high', () => {

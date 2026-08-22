@@ -101,7 +101,7 @@ export function GetStateWithForecast(
 
     const hourLocal = at.getHours();
     const morning = hourLocal >= MORNING_START_HOUR && hourLocal <= MORNING_END_HOUR;
-    const poor = plan.bankDelta > 0; // tomorrow can't meet its own need (worse than today)
+    const poor = plan.poor; // tomorrow can't cover its own need
     const needsMorningFloor = temperature < MORNING_TEMP;
     const needsMorningPoor = temperature < MORNING_POOR_TEMP;
 
@@ -115,7 +115,8 @@ export function GetStateWithForecast(
       // offline / no forecast → sun-elevation gate toward requiredNow
       enableHeater = elevation >= MinElevDeg && temperature < plan.requiredNow - HYSTERESIS_DEG;
     } else if (poor && plan.bankable) {
-      // tomorrow worse AND today has surplus solar to bank with → heat toward requiredNow
+      // tomorrow worse AND today has surplus solar on the boiler's phase to bank with
+      // → heat toward requiredNow (grid import only if the day can actually fund it)
       enableHeater = temperature < plan.requiredNow - HYSTERESIS_DEG;
     } else if (plan.solarToday >= MIN_SOLAR_TODAY_KWH) {
       // decent day: use the solar we generate rather than export – heat toward no-bank target

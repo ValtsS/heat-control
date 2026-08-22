@@ -81,12 +81,13 @@ describe('GetStateWithForecast – forecast-driven decision', () => {
     expect(getControlStateForTest()).toBe(PowerState.TurningOff);
   });
 
-  it('decent day (good solar today), poor tomorrow → bank from solar surplus', () => {
-    const fc = makeForecast([8, 1]); // today 8 (≥5 meaningful), tomorrow 1 → poor+bankable
-    const at = new Date('2025-08-15T12:00:00Z');
-    // at 12:00 solarToday ~4 >= MIN 5? 4 < 5 → falls to... bankable branch
-    // bankable: solarToday(4) > energyToTarget((55-42)*0.174+1.43)=3.69 → true
-    expect(GetStateWithForecast(100, 42, false, fc, false, at)).toBe(true);
+  it('decent day (good solar today), poor tomorrow → heat (use solar / bank surplus)', () => {
+    // boiler-phase share (~1/3 of the 13 kWp array) only reaches the heater, so today
+    // must be genuinely sunny to have surplus to chase the target toward a poor tomorrow
+    const fc = makeForecast([30, 2]); // plenty total-array today, poor tomorrow
+    const at = new Date('2025-08-15T07:00:00Z');
+    // ~7 boiler-phase kWh today → above no-bank target, so heat to chase target
+    expect(GetStateWithForecast(100, 30, false, fc, false, at)).toBe(true);
   });
 
   it('crap day (solar < MIN) outside morning → no chase (bare minimum only)', () => {
@@ -141,20 +142,31 @@ describe('GetStateWithForecast – forecast-driven decision', () => {
     expect(getControlStateForTest()).toBe(PowerState.TurningOn);
   });
 
-  it('pluggable provider – same control works with any Forecast shape', () => {
+it('pluggable provider – same control works with any Forecast shape', () => {
+    // solcast-shaped: a full sunny day today (high total-array), poor tomorrow
+    const sunnyToday = 30; // kWh total-array today
+    const poorTomorrow = 2; // kWh total-array tomorrow
+    const base = new Date('2025-08-15T05:00:00Z');
+    const entries = [];
+    for (let d = 0; d < 2; d++) {
+      const kWh = d === 0 ? sunnyToday : poorTomorrow;
+      for (let h = 0; h < 24; h++) {
+        const start = new Date(base.getTime() + d * 24 * 3600e3 + h * 3600e3);
+        entries.push({
+          period_start: start,
+          period_end: new Date(start.getTime() + 3600e3),
+          pv_estimate: kWh / 24,
+        });
+      }
+    }
     const solcastLike: Forecast = {
-      forecasts: [
-        {
-          period_start: new Date('2025-08-15T10:00:00Z'),
-          period_end: new Date('2025-08-15T11:00:00Z'),
-          pv_estimate: 6,
-        },
-      ],
+      forecasts: entries,
       fetchedAt: new Date('2025-08-15T10:00:00Z'),
       provider: 'solcast',
     };
     const at = new Date('2025-08-15T10:15:00Z');
     jest.spyOn(sun, 'getSunElevationUTC').mockReturnValue(30);
-    expect(GetStateWithForecast(100, 40, false, solcastLike, false, at)).toBe(true);
+    // decent boiler-phase solar today + cold tank → heat (chases target)
+    expect(GetStateWithForecast(100, 25, false, solcastLike, false, at)).toBe(true);
   });
 });

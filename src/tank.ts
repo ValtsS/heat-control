@@ -11,6 +11,7 @@ export type TankConfig = {
   maxBankDeg: number; // how far above target we preheat when tomorrow looks poor
   forecastMaxAgeMs: number; // stale forecast → treated as no-data
   maxTemp: number; // thermostat ceiling (≈63-65 °C), must stay ≤65
+  boilerPhaseShare: number; // fraction of total-array forecast that lands on the boiler's phase
 };
 
 export type TankPlan = {
@@ -19,8 +20,9 @@ export type TankPlan = {
   requiredNoBank: number; // temperature needed now to hit targetTemp (no bank) by midnight
   solarToday: number; // kWh still coming today (from `at` to midnight) – total array
   solarTomorrow: number; // kWh forecast for the next 24h – total array
-  bankDelta: number; // °C we're preheating for tomorrow
-  bankable: boolean; // tomorrow worse AND today's remaining solar can cover the bank
+  bankDelta: number; // °C we're preheating for tomorrow (0 unless surplus can finance it)
+  bankable: boolean; // today's boiler-phase surplus can cover the full bank
+  poor: boolean; // tomorrow can't cover its own need (independent of today's surplus)
   stale: boolean; // forecast missing or older than forecastMaxAgeMs
 };
 
@@ -34,6 +36,7 @@ export function defaultTankConfig(): TankConfig {
     maxBankDeg: parseNum(process.env.MAX_BANK_DEG, 7),
     forecastMaxAgeMs: parseDuration(process.env.FORECAST_MAX_AGE, 6 * 3600 * 1000), // "6h"
     maxTemp: parseNum(process.env.TANK_MAX_TEMP, 63),
+    boilerPhaseShare: parseNum(process.env.BOILER_PHASE_SHARE, 0.33), // boiler is 1 of 3 phases
   };
 }
 
@@ -57,37 +60,50 @@ export function planTank(
   const hoursToMidnight = Math.max(0, (midnight.getTime() - at.getTime()) / 3600e3);
   const lossToEod = (cfg.tankLossKwhPerDay / 24) * hoursToMidnight;
 
+  // Whole-array forecast kWh. Only the boiler's phase share ever reaches the heater:
+  // the arrays are 3 kW E + 10 kW S = 13 kWp across 3 phases, so the boiler can only
+  // bank/self-consume with its phase fraction, not the whole array. `boilerShare` is
+  // the default phase factor used whenever BOILER_PHASE_SHARE is unset.
   const solarToday = fc ? ForecastProcessor.calcKWh(fc, at, midnight, 0) : 0;
   const solarTomorrow = fc
     ? ForecastProcessor.calcKWh(fc, midnight, new Date(midnight.getTime() + 24 * 3600e3), 0)
     : 0;
+  const boilerSolarToday = solarToday * cfg.boilerPhaseShare;
+  const boilerSolarTomorrow = solarTomorrow * cfg.boilerPhaseShare;
 
   const needTomorrow =
     (cfg.targetTemp - cfg.minTemp) * EPD + cfg.tankLossKwhPerDay + cfg.usageKwhPerDay;
 
-  const shortfall = fc ? Math.max(0, needTomorrow - solarTomorrow) : 0;
+  const shortfall = fc ? Math.max(0, needTomorrow - boilerSolarTomorrow) : 0;
 
-  // bank only when tomorrow is worse (can't meet its own need) AND today's remaining
-  // solar actually exceeds what's needed to reach the no-bank target – i.e. there is
-  // real surplus solar to bank with (otherwise banking would just be grid import).
-  // Math.max(0, ...) prevents a negative threshold (tank already above target) from
-  // making `bankable` true even with zero remaining solar (e.g. at night).
+  // Bank only when (a) tomorrow genuinely can't cover its own need (poor), AND (b)
+  // today's *remaining boiler-phase solar* can actually fund the whole bank. If today
+  // can't pay for the full preheat, banking is just grid import at night / low sun, so
+  // we don't bank at all. `energyToTarget` (positive when the tank is below target) is
+  // what today must still spend just to finish at target; anything beyond that is the
+  // surplus that exists to bank with.
   let bankDelta = 0;
   let bankable = false;
-  const energyToTarget = (cfg.targetTemp - tempNow) * EPD + lossToEod;
-  if (fc && shortfall > 0) {
-    bankDelta = Math.min(shortfall / EPD, cfg.maxBankDeg);
-    bankable = solarToday > Math.max(0, energyToTarget);
+  const poor = !!fc && shortfall > 0;
+  const energyToTarget = Math.max(0, (cfg.targetTemp - tempNow) * EPD + lossToEod);
+  if (poor) {
+    const bankTarget = Math.min(shortfall / EPD, cfg.maxBankDeg);
+    const surplusToday = boilerSolarToday - energyToTarget;
+    if (surplusToday >= bankTarget * EPD) {
+      bankable = true;
+      bankDelta = bankTarget;
+    }
   }
   // thermostat caps the tank (never assume above maxTemp) – still ≥ legionella 60 °C
   const ceiling = Math.min(cfg.maxTemp, 65);
   const targetEod = Math.min(Math.max(cfg.targetTemp + bankDelta, cfg.minTemp), ceiling);
 
-  // temp needed now to land at targetEod by midnight given remaining solar & loss
-  const requiredNow = targetEod - (solarToday - lossToEod) / EPD;
+  // temp needed now to land at targetEod by midnight given remaining boiler-phase
+  // solar & loss
+  const requiredNow = targetEod - (boilerSolarToday - lossToEod) / EPD;
   // temp needed now to land at plain targetTemp (no bank) by midnight
   const requiredNoBank = Math.min(
-    Math.max(cfg.targetTemp - (solarToday - lossToEod) / EPD, cfg.minTemp),
+    Math.max(cfg.targetTemp - (boilerSolarToday - lossToEod) / EPD, cfg.minTemp),
     ceiling
   );
 
@@ -95,10 +111,11 @@ export function planTank(
     targetEod,
     requiredNow,
     requiredNoBank,
-    solarToday,
-    solarTomorrow,
+    solarToday: boilerSolarToday, // boiler-phase kWh, not whole-array
+    solarTomorrow: boilerSolarTomorrow, // boiler-phase kWh, not whole-array
     bankDelta,
     bankable,
+    poor,
     stale,
   };
 }
