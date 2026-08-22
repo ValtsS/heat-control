@@ -1,7 +1,8 @@
 import dotenv from 'dotenv';
 import express, { Express, Request, Response } from 'express';
-import { GetStateWithForecast, getControlStateForTest } from './control';
+import { GetStateWithForecast, getControlStateForTest, getLastPlanForTest } from './control';
 import { planTank, defaultTankConfig } from './tank';
+import { defaultPlannerConfig, planSchedule } from './energy/planner';
 import { FluxClient } from './fluxClient';
 import { OpenMeteoProvider } from './forecast/openMeteoProvider';
 import { SolcastProvider } from './forecast/solcastProvider';
@@ -73,6 +74,13 @@ app.get('/forecast', async (_req: Request, res: Response) => {
   res.json({ provider: f.provider, fetchedAt: f.fetchedAt, forecasts: f.forecasts.slice(0, 48) });
 });
 
+app.get('/logs', async (req: Request, res: Response) => {
+  const limitRaw = parseInt(req.query.limit as string, 10);
+  const limit = isNaN(limitRaw) ? 200 : Math.max(1, Math.min(limitRaw, 2000));
+  const logs = await forecastStore.recentDecisions(limit);
+  res.json({ count: logs.length, logs });
+});
+
 // debug/stats snapshot of the whole decision.
 // temp comes from the last /allow sample in the DB (authoritative), not the caller.
 app.get('/debug', async (_req: Request, res: Response) => {
@@ -86,6 +94,15 @@ app.get('/debug', async (_req: Request, res: Response) => {
   ]);
   const temp = lastSample?.temp ?? NaN;
   const plan = planTank(at, temp, forecast, defaultTankConfig());
+  const mpc = defaultPlannerConfig();
+  const schedulePlan = planSchedule(
+    at,
+    temp,
+    (power.power ?? 0) / 1000,
+    forecast,
+    legionellaForced,
+    mpc
+  );
   res.json({
     at: at.toISOString(),
     lastSample: lastSample
@@ -109,6 +126,16 @@ app.get('/debug', async (_req: Request, res: Response) => {
         }
       : null,
     plan: plan,
+    mpc: {
+      reason: schedulePlan.reason,
+      heat: schedulePlan.heat,
+      importKwh: schedulePlan.schedule.totalImportKwh,
+      solarToday: schedulePlan.solarToday,
+      solarTomorrow: schedulePlan.solarTomorrow,
+      nextHeatingHour:
+        schedulePlan.schedule.steps.find((s: { heat: boolean }) => s.heat)?.hour ?? null,
+      schedule: schedulePlan.schedule.steps.slice(0, 48),
+    },
   });
 });
 
@@ -122,9 +149,31 @@ app.get('/allow', async (req: Request, res: Response) => {
   const forecast = await forecastStore.load();
   const legionellaForced = await legionella.needsForcedHeat();
 
-  if (GetStateWithForecast(power, T, heatIsOn, forecast, legionellaForced))
-    res.send('HEATON\n').end();
+  const heatCmd = GetStateWithForecast(power, T, heatIsOn, forecast, legionellaForced);
+  if (heatCmd) res.send('HEATON\n').end();
   else res.send('HEAToff\n').end();
+
+  // decision log – one compact row per poll for post-hoc debugging
+  try {
+    const plan = getLastPlanForTest();
+    if (plan) {
+      const firstHeat = plan.schedule.steps.find((s) => s.heat);
+      await forecastStore.appendDecision({
+        at: new Date(),
+        temp: T,
+        livePower: power ?? 0,
+        heatCmd,
+        heatOn: heatIsOn,
+        reason: plan.reason,
+        importKwh: plan.schedule.totalImportKwh,
+        nextFreeHours: firstHeat ? firstHeat.hour : -1,
+        solarToday: plan.solarToday,
+        solarTomorrow: plan.solarTomorrow,
+      });
+    }
+  } catch (e) {
+    console.error('decision log', e);
+  }
 
   // legionella tracking – record if we reached 60C
   legionella.recordIfHot(T).catch((e) => console.error('legionella record', e));

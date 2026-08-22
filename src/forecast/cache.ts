@@ -10,6 +10,19 @@ export type Sample = {
   heatOn: boolean;
 };
 
+export type DecisionLog = {
+  at: Date;
+  temp: number;
+  livePower: number; // W on boiler phase (actual)
+  heatCmd: boolean; // commanded heater
+  heatOn: boolean; // relay: actual power reaching the element
+  reason: string;
+  importKwh: number;
+  nextFreeHours: number; // hours until the schedule first heats (0 = heating now)
+  solarToday: number;
+  solarTomorrow: number;
+};
+
 export interface ForecastStore {
   save(forecast: Forecast): Promise<void>;
   load(): Promise<Forecast | null>;
@@ -17,6 +30,8 @@ export interface ForecastStore {
   saveHot(at: Date): Promise<void>;
   saveSample(s: Sample): Promise<void>;
   lastSample(): Promise<Sample | null>;
+  appendDecision(d: DecisionLog): Promise<void>;
+  recentDecisions(limit: number): Promise<DecisionLog[]>;
 }
 
 type Row = { time: number; json: string };
@@ -35,19 +50,27 @@ export class SqliteForecastStore implements ForecastStore {
         this.db.run(
           `CREATE TABLE IF NOT EXISTS forecast (time INTEGER PRIMARY KEY, json TEXT, provider TEXT)`,
           (e) => {
-            if (e) reject(e);
-            else
-              this.db.run(
-                `CREATE TABLE IF NOT EXISTS legionella (id INTEGER PRIMARY KEY CHECK (id=1), last_hot INTEGER)`,
-                (e2) => {
-                  if (e2) reject(e2);
-                  else
+            if (e) return reject(e);
+            this.db.run(
+              `CREATE TABLE IF NOT EXISTS legionella (id INTEGER PRIMARY KEY CHECK (id=1), last_hot INTEGER)`,
+              (e2) => {
+                if (e2) return reject(e2);
+                this.db.run(
+                  `CREATE TABLE IF NOT EXISTS stats (id INTEGER PRIMARY KEY CHECK (id=1), at INTEGER, temp REAL, power REAL, heat_on INTEGER)`,
+                  (e3) => {
+                    if (e3) return reject(e3);
                     this.db.run(
-                      `CREATE TABLE IF NOT EXISTS stats (id INTEGER PRIMARY KEY CHECK (id=1), at INTEGER, temp REAL, power REAL, heat_on INTEGER)`,
-                      (e3) => (e3 ? reject(e3) : resolve())
+                      `CREATE TABLE IF NOT EXISTS decisions (
+                        at INTEGER, temp REAL, live_power REAL, heat_cmd INTEGER,
+                        heat_on INTEGER, reason TEXT, import_kwh REAL,
+                        next_free_hours INTEGER, solar_today REAL, solar_tomorrow REAL
+                      )`,
+                      (e4) => (e4 ? reject(e4) : resolve())
                     );
-                }
-              );
+                  }
+                );
+              }
+            );
           }
         );
       });
@@ -152,6 +175,67 @@ export class SqliteForecastStore implements ForecastStore {
     });
   }
 
+  async appendDecision(d: DecisionLog): Promise<void> {
+    await this.ready;
+    return new Promise((resolve, reject) => {
+      this.db.run(
+        `INSERT INTO decisions (at, temp, live_power, heat_cmd, heat_on, reason, import_kwh, next_free_hours, solar_today, solar_tomorrow) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+        [
+          d.at.getTime(),
+          d.temp,
+          d.livePower,
+          d.heatCmd ? 1 : 0,
+          d.heatOn ? 1 : 0,
+          d.reason,
+          d.importKwh,
+          d.nextFreeHours,
+          d.solarToday,
+          d.solarTomorrow,
+        ],
+        (err) => (err ? reject(err) : resolve())
+      );
+    });
+  }
+
+  async recentDecisions(limit: number): Promise<DecisionLog[]> {
+    await this.ready;
+    return new Promise((resolve, reject) => {
+      this.db.all(
+        `SELECT at, temp, live_power, heat_cmd, heat_on, reason, import_kwh, next_free_hours, solar_today, solar_tomorrow FROM decisions ORDER BY at DESC LIMIT ?`,
+        [limit],
+        (err, rows) => {
+          if (err) return reject(err);
+          const r = rows as {
+            at: number;
+            temp: number;
+            live_power: number;
+            heat_cmd: number;
+            heat_on: number;
+            reason: string;
+            import_kwh: number;
+            next_free_hours: number;
+            solar_today: number;
+            solar_tomorrow: number;
+          }[];
+          resolve(
+            r.map((x) => ({
+              at: new Date(x.at),
+              temp: x.temp,
+              livePower: x.live_power,
+              heatCmd: x.heat_cmd === 1,
+              heatOn: x.heat_on === 1,
+              reason: x.reason,
+              importKwh: x.import_kwh,
+              nextFreeHours: x.next_free_hours,
+              solarToday: x.solar_today,
+              solarTomorrow: x.solar_tomorrow,
+            }))
+          );
+        }
+      );
+    });
+  }
+
   close(): Promise<void> {
     return new Promise((resolve, reject) => this.db.close((e) => (e ? reject(e) : resolve())));
   }
@@ -161,6 +245,7 @@ export class MemoryForecastStore implements ForecastStore {
   private forecast: Forecast | null = null;
   private hot: Date | null = null;
   private sample: Sample | null = null;
+  private decisions: DecisionLog[] = [];
   async save(f: Forecast): Promise<void> {
     this.forecast = f;
   }
@@ -178,5 +263,12 @@ export class MemoryForecastStore implements ForecastStore {
   }
   async lastSample(): Promise<Sample | null> {
     return this.sample;
+  }
+  async appendDecision(d: DecisionLog): Promise<void> {
+    this.decisions.push(d);
+    if (this.decisions.length > 5000) this.decisions.splice(0, this.decisions.length - 5000);
+  }
+  async recentDecisions(limit: number): Promise<DecisionLog[]> {
+    return this.decisions.slice(-limit).reverse();
   }
 }

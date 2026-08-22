@@ -25,13 +25,10 @@ function makeForecast(dayKwh: number[], fetchedAt?: string): Forecast {
   return { forecasts: entries, fetchedAt: fetched, provider: 'test' };
 }
 
-function localMorning(hour: number): Date {
-  const d = new Date('2025-08-15T07:00:00Z');
-  d.setHours(hour); // set LOCAL hour
-  return d;
-}
+// treat UTC as "local" for deterministic morning-window tests
+const UTC: (d: Date) => number = (d) => d.getUTCHours();
 
-describe('GetStateWithForecast – forecast-driven decision', () => {
+describe('GetStateWithForecast – MPC decision', () => {
   beforeEach(() => {
     resetControlStateForTest();
     jest.spyOn(process.hrtime, 'bigint').mockReturnValue(BigInt(1_000_000_000_000));
@@ -40,112 +37,75 @@ describe('GetStateWithForecast – forecast-driven decision', () => {
   });
   afterEach(() => jest.restoreAllMocks());
 
-  it('morning, good tomorrow → defer (no import, wait for solar)', () => {
-    const fc = makeForecast([12, 12]); // tomorrow 12 ≥ 11.6 need → bankDelta 0
-    const at = localMorning(7);
-    expect(GetStateWithForecast(100, 45, false, fc, false, at)).toBe(false);
-    expect(getControlStateForTest()).toBe(PowerState.TurningOff);
-  });
-
-  it('morning cold (T<40) → hard floor: always heat (may import)', () => {
-    const fc = makeForecast([12, 12]);
-    const at = localMorning(7);
-    expect(GetStateWithForecast(100, 35, false, fc, false, at)).toBe(true);
+  it('legionella forced → heat regardless of power/sun (grid import)', () => {
+    jest.spyOn(sun, 'getSunElevationUTC').mockReturnValue(-10);
+    expect(
+      GetStateWithForecast(-500, 52, false, null, true, new Date('2025-08-15T02:00:00Z'), UTC)
+    ).toBe(true);
     expect(getControlStateForTest()).toBe(PowerState.TurningOn);
   });
 
-  it('morning, poor tomorrow + no solar → import to MORNING_POOR_TEMP (45)', () => {
-    const fc = makeForecast([1, 1]); // today+tomorrow crap → poor
-    const at = localMorning(7);
-    // T=42 < 45 → morning-poor import
-    expect(GetStateWithForecast(100, 42, false, fc, false, at)).toBe(true);
-    resetControlStateForTest();
-    // T=46 ≥ 45 → no import beyond bare minimum
-    expect(GetStateWithForecast(100, 46, false, fc, false, at)).toBe(false);
+  it('morning cold (T<floor) → hard floor: always heat (may import)', () => {
+    const fc = makeForecast([12, 12]);
+    const at = new Date('2025-08-15T07:00:00Z'); // local 07 within 6-10 window
+    expect(GetStateWithForecast(100, 35, false, fc, false, at, UTC)).toBe(true);
+    expect(getControlStateForTest()).toBe(PowerState.TurningOn);
   });
 
-  it('evening, poor tomorrow, no solar → NO night import for banking', () => {
-    const fc = makeForecast([3, 1]); // today 3, tomorrow 1 → poor, but no meaningful solar today
-    const at = new Date('2025-08-15T18:00:00Z'); // evening, not morning
-    jest.spyOn(sun, 'getSunElevationUTC').mockReturnValue(-5);
-    expect(GetStateWithForecast(100, 50, false, fc, false, at)).toBe(false);
-    expect(getControlStateForTest()).toBe(PowerState.TurningOff);
-  });
-
-  it('night, poor tomorrow, tank ABOVE target, solarToday 0 → NO bank-import', () => {
-    // regression: tank at 60 (> target 55), solarToday ~0 at night – must NOT heat to bank
-    const fc = makeForecast([0, 1]); // today 0 (night), poor tomorrow
-    const at = new Date('2025-08-15T21:00:00Z'); // night
+  it('warm tank, no solar, no floor pressure → defer (no import)', () => {
+    // tank 60 at local 15:00 (not morning; floor is ~15h away and tank is far above it)
+    const fc = makeForecast([0, 1]);
+    const at = new Date('2025-08-15T15:00:00Z'); // local 15, outside morning window
     jest.spyOn(sun, 'getSunElevationUTC').mockReturnValue(-10);
-    expect(GetStateWithForecast(100, 60, false, fc, false, at)).toBe(false);
+    expect(GetStateWithForecast(100, 60, false, fc, false, at, UTC)).toBe(false);
     expect(getControlStateForTest()).toBe(PowerState.TurningOff);
   });
 
-  it('decent day (good solar today), poor tomorrow → heat (use solar / bank surplus)', () => {
-    // boiler-phase share (~1/3 of the 13 kWp array) only reaches the heater, so today
-    // must be genuinely sunny to have surplus to chase the target toward a poor tomorrow
-    const fc = makeForecast([30, 2]); // plenty total-array today, poor tomorrow
-    const at = new Date('2025-08-15T07:00:00Z');
-    // ~7 boiler-phase kWh today → above no-bank target, so heat to chase target
-    expect(GetStateWithForecast(100, 30, false, fc, false, at)).toBe(true);
-  });
-
-  it('crap day (solar < MIN) outside morning → no chase (bare minimum only)', () => {
-    const fc = makeForecast([1, 1]); // crap today+tomorrow
-    const at = new Date('2025-08-15T14:00:00Z'); // afternoon, not morning
-    // solarToday (1/24)*10=0.42 < MIN 5 → off (no all-day import)
-    expect(GetStateWithForecast(100, 40, false, fc, false, at)).toBe(false);
-  });
-
-  it('decent day, midday, tank below no-bank target → heat (use solar, don not export)', () => {
-    const fc = makeForecast([12, 12]); // not poor (tomorrow good)
+  it('free live surplus + tank below target → soak it (0 import)', () => {
+    const fc = makeForecast([12, 2]);
     const at = new Date('2025-08-15T12:00:00Z');
-    jest.spyOn(sun, 'getSunElevationUTC').mockReturnValue(20);
-    // solarToday (12/24)*12=6 >= 5 → self-consumption; T=46 vs requiredNoBank?
-    // requiredNoBank = 55 - (6-1.43)/0.174 = 55-26.3 = 28.7 → 46 > 28.7 → OFF (defer, solar covers)
-    expect(GetStateWithForecast(100, 46, false, fc, false, at)).toBe(false);
+    // big surplus on the phase right now (>= heater) → heat for free
+    expect(GetStateWithForecast(3000, 45, false, fc, false, at, UTC)).toBe(true);
+  });
+
+  it('crap day, warm-enough tank, afternoon → off (no all-day import)', () => {
+    const fc = makeForecast([1, 1]); // ~0.3 boiler-phase kWh today
+    const at = new Date('2025-08-15T14:00:00Z'); // local 14, not morning
+    // tank at 50 > target-relative floor; no meaningful surplus → no import
+    expect(GetStateWithForecast(100, 50, false, fc, false, at, UTC)).toBe(false);
   });
 
   it('stale forecast → sun-gate only, conservative', () => {
     const fc = makeForecast([12, 12], '2025-08-15T01:00:00Z'); // 11h stale
     const at = new Date('2025-08-15T12:00:00Z');
     jest.spyOn(sun, 'getSunElevationUTC').mockReturnValue(5); // sun low
-    expect(GetStateWithForecast(100, 40, false, fc, false, at)).toBe(false);
+    expect(GetStateWithForecast(100, 40, false, fc, false, at, UTC)).toBe(false);
     resetControlStateForTest();
     jest.spyOn(sun, 'getSunElevationUTC').mockReturnValue(20);
-    expect(GetStateWithForecast(100, 40, false, fc, false, at)).toBe(true);
-  });
-
-  it('legionellaForced heats even at night with no power (grid import)', () => {
-    jest.spyOn(sun, 'getSunElevationUTC').mockReturnValue(-10);
-    const forecast = null;
-    expect(
-      GetStateWithForecast(-500, 52, false, forecast, true, new Date('2025-08-15T02:00:00Z'))
-    ).toBe(true);
-    expect(getControlStateForTest()).toBe(PowerState.TurningOn);
+    expect(GetStateWithForecast(100, 40, false, fc, false, at, UTC)).toBe(true);
   });
 
   it('undefined power (wifi down): sun up → heat, sun down → off, forced → on', () => {
     jest.spyOn(sun, 'getSunElevationUTC').mockReturnValue(30);
     expect(
-      GetStateWithForecast(undefined, 40, false, null, false, new Date('2025-08-15T12:00:00Z'))
+      GetStateWithForecast(undefined, 40, false, null, false, new Date('2025-08-15T12:00:00Z'), UTC)
     ).toBe(true);
     resetControlStateForTest();
     jest.spyOn(sun, 'getSunElevationUTC').mockReturnValue(5);
     expect(
-      GetStateWithForecast(undefined, 40, false, null, false, new Date('2025-08-15T02:00:00Z'))
+      GetStateWithForecast(undefined, 40, false, null, false, new Date('2025-08-15T02:00:00Z'), UTC)
     ).toBe(false);
     resetControlStateForTest();
     expect(
-      GetStateWithForecast(undefined, 40, false, null, true, new Date('2025-08-15T02:00:00Z'))
+      GetStateWithForecast(undefined, 40, false, null, true, new Date('2025-08-15T02:00:00Z'), UTC)
     ).toBe(true);
     expect(getControlStateForTest()).toBe(PowerState.TurningOn);
   });
 
-it('pluggable provider – same control works with any Forecast shape', () => {
+  it('pluggable provider – same control works with any Forecast shape', () => {
     // solcast-shaped: a full sunny day today (high total-array), poor tomorrow
-    const sunnyToday = 30; // kWh total-array today
-    const poorTomorrow = 2; // kWh total-array tomorrow
+    const sunnyToday = 30;
+    const poorTomorrow = 2;
     const base = new Date('2025-08-15T05:00:00Z');
     const entries = [];
     for (let d = 0; d < 2; d++) {
@@ -166,7 +126,7 @@ it('pluggable provider – same control works with any Forecast shape', () => {
     };
     const at = new Date('2025-08-15T10:15:00Z');
     jest.spyOn(sun, 'getSunElevationUTC').mockReturnValue(30);
-    // decent boiler-phase solar today + cold tank → heat (chases target)
-    expect(GetStateWithForecast(100, 25, false, solcastLike, false, at)).toBe(true);
+    // cold tank + sunny boiler-phase day → heat toward target
+    expect(GetStateWithForecast(100, 25, false, solcastLike, false, at, UTC)).toBe(true);
   });
 });
