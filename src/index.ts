@@ -101,7 +101,9 @@ app.get('/debug', async (_req: Request, res: Response) => {
     (power.power ?? 0) / 1000,
     forecast,
     legionellaForced,
-    mpc
+    mpc,
+    (d) => d.getHours(),
+    lastSample?.heatOn ?? false
   );
   res.json({
     at: at.toISOString(),
