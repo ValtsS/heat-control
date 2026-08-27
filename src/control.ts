@@ -105,7 +105,8 @@ export function GetStateWithForecast(
       forecast,
       false,
       defaultPlannerConfig(),
-      getLocalHour
+      getLocalHour,
+      heaterOn
     );
     lastPlan = plan;
 

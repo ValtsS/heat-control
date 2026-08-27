@@ -62,7 +62,8 @@ export function planSchedule(
   forecast: Forecast | null,
   legionellaForced: boolean,
   cfg: PlannerConfig,
-  getLocalHour: (d: Date) => number = (d) => d.getHours()
+  getLocalHour: (d: Date) => number = (d) => d.getHours(),
+  heaterOn: boolean = false
 ): SchedulePlan {
   const stale = !forecast || at.getTime() - forecast.fetchedAt.getTime() > cfg.forecastMaxAgeMs;
   const fc = stale ? null : forecast;
@@ -107,9 +108,17 @@ export function planSchedule(
   // Free surplus fast-path: if the boiler's phase is exporting at least a full heater
   // load right now, soak it into the tank (up to the thermostat cap). This captures
   // energy that would otherwise be lost to export, regardless of what the horizon
-  // optimizer says (the optimizer already prices it free, but this guarantees it when
-  // the tank is already warm and would otherwise defer). Never imported, always free.
-  if (livePowerKw !== undefined && livePowerKw >= cfg.heaterKw - 1e-9) {
+  // optimizer says.
+  //
+  // The live reading `active_grid_B_power_W` is the surplus AFTER the heater's own
+  // draw. When the heater is ON it pulls ~heaterKw, so the reading reads low even
+  // though the true surplus is large. We therefore reconstruct the heater-OFF surplus
+  // by adding the heater's draw back when the relay (`heatOn`) says the element is
+  // actually drawing. Without this the gate flips on/off every poll: ON pulls the
+  // reading under threshold → OFF → surplus returns → ON (15s chatter).
+  const baseSurplusKw =
+    livePowerKw !== undefined ? livePowerKw + (heaterOn ? cfg.heaterKw : 0) : undefined;
+  if (baseSurplusKw !== undefined && baseSurplusKw >= cfg.heaterKw - 1e-9) {
     const canAbsorb = tempNow < cfg.model.maxTemp - 1e-9;
     if (canAbsorb) {
       return {
@@ -122,7 +131,7 @@ export function planSchedule(
     }
   }
 
-  const solar = solarProfile(fc, at, cfg.horizonHours, cfg.boilerPhaseShare, livePowerKw);
+  const solar = solarProfile(fc, at, cfg.horizonHours, cfg.boilerPhaseShare, baseSurplusKw);
   const res = solveHorizon(
     tempNow,
     solar,

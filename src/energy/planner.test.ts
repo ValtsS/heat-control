@@ -70,6 +70,43 @@ describe('planSchedule – heat now or defer?', () => {
     expect(p.reason).toBe('free-surplus');
   });
 
+  it('heater ON + low live reading but big real surplus → keeps heating (no oscillation)', () => {
+    // regression: live reading is the surplus AFTER the heater draw. With heater ON
+    // it reads ~1.4 kW but real surplus is ~3.8 kW → must STAY on (no chatter).
+    const cfg: PlannerConfig = { ...CFG, horizonHours: 6 };
+    const at = new Date('2026-08-15T12:00:00Z');
+    // heaterOn=true, live 1.4 kW → base surplus 1.4 + 2.4 = 3.8 kW ≥ 2.4 → keep heating
+    const p = planSchedule(
+      at,
+      45,
+      1.4,
+      makeForecast([12, 2]),
+      false,
+      cfg,
+      (d) => d.getUTCHours(),
+      true
+    );
+    expect(p.heat).toBe(true);
+    expect(p.reason).toBe('free-surplus');
+  });
+
+  it('heater OFF + live below threshold → no free-surplus (correct)', () => {
+    const cfg: PlannerConfig = { ...CFG, horizonHours: 6 };
+    const at = new Date('2026-08-15T12:00:00Z');
+    // heater off, live 1.4 kW (< 2.4) → base surplus 1.4 kW → NOT free → defer/solver
+    const p = planSchedule(
+      at,
+      45,
+      1.4,
+      makeForecast([12, 2]),
+      false,
+      cfg,
+      (d) => d.getUTCHours(),
+      false
+    );
+    expect(p.reason).toBe('defer');
+  });
+
   it('warm tank + no solar → defer', () => {
     const at = new Date('2026-08-15T02:00:00Z'); // night
     const p = planSchedule(at, 60, 0, makeForecast([0, 1]), false, CFG, (d) => d.getUTCHours());
