@@ -10,6 +10,7 @@ import { SqliteForecastStore, MemoryForecastStore, ForecastStore } from './forec
 import { ForecastScheduler } from './forecast/scheduler';
 import { LegionellaService } from './legionella';
 import { PowerService } from './power';
+import { ForecastProcessor } from './forecast/processor';
 
 type AllowParams = {
   lastState: string;
@@ -132,8 +133,25 @@ app.get('/debug', async (_req: Request, res: Response) => {
       reason: schedulePlan.reason,
       heat: schedulePlan.heat,
       importKwh: schedulePlan.schedule.totalImportKwh,
+      // NOTE: solarToday/solarTomorrow below are computed from the solver's truncated
+      // horizon array (MPC_HORIZON_HOURS from `now`), so they under-report the real
+      // next-day total. For the true full-UTC-calendar-day totals see forecastDayTotals.
       solarToday: schedulePlan.solarToday,
       solarTomorrow: schedulePlan.solarTomorrow,
+      // full-UTC-calendar-day boiler-phase kWh from the whole cached forecast (not truncated)
+      forecastDayTotals: forecast
+        ? (() => {
+            const d0 = new Date(at);
+            d0.setUTCHours(0, 0, 0, 0);
+            const d1 = new Date(d0.getTime() + 24 * 3600e3);
+            const d2 = new Date(d1.getTime() + 24 * 3600e3);
+            const share = mpc.boilerPhaseShare;
+            return {
+              todayKwh: ForecastProcessor.calcKWh(forecast, d0, d1, 0) * share,
+              tomorrowKwh: ForecastProcessor.calcKWh(forecast, d1, d2, 0) * share,
+            };
+          })()
+        : null,
       nextHeatingHour:
         schedulePlan.schedule.steps.find((s: { heat: boolean }) => s.heat)?.hour ?? null,
       schedule: schedulePlan.schedule.steps.slice(0, 48),
