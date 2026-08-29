@@ -61,7 +61,7 @@ export function planTank(
   const lossToEod = (cfg.tankLossKwhPerDay / 24) * hoursToMidnight;
 
   // Whole-array forecast kWh. Only the boiler's phase share ever reaches the heater:
-  // the arrays are 3 kW E + 10 kW S = 13 kWp across 3 phases, so the boiler can only
+  // the arrays are 3.6 kW E/SE + 14.5 kW S = 18.1 kWp across 3 phases, so the boiler can only
   // bank/self-consume with its phase fraction, not the whole array. `boilerShare` is
   // the default phase factor used whenever BOILER_PHASE_SHARE is unset.
   const solarToday = fc ? ForecastProcessor.calcKWh(fc, at, midnight, 0) : 0;

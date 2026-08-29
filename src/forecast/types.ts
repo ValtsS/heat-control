@@ -26,10 +26,10 @@ export type PvArrayConfig = {
 
 export function parsePvArrays(envVal: string | undefined): PvArrayConfig[] {
   if (!envVal) {
-    // default: 3kWp E 35°, 10kWp S 45° per user request #5
+    // default: 3.6kWp E/SE 30° (compass ~110°, bifacial) + 14.5kWp S 45° (compass ~170°)
     return [
-      { kWp: 3, tilt: 35, azimuth: -90 },
-      { kWp: 10, tilt: 45, azimuth: 0 },
+      { kWp: 3.6, tilt: 30, azimuth: -70 },
+      { kWp: 14.5, tilt: 45, azimuth: -10 },
     ];
   }
   try {

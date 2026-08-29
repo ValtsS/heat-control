@@ -3,7 +3,7 @@
 Heats a ~150L boiler from on-grid solar using an **MPC rolling-horizon scheduler** (`src/energy/*`): at every `/allow` poll the optimizer answers "heat now, or defer?" by minimizing grid-import kWh over the next `MPC_HORIZON_HOURS`, with the daily morning floor + legionella as hard constraints and a free-surplus soak fast-path. `planTank` (`src/tank.ts`) is the offline/stale-forecast fallback (sun-gate). Branch `smart` on top of `dumb`.
 
 - Inverter → Influx `solar` (`active_grid_B_power_W`) = net surplus after house load (positive=export, negative=import). Heater 2.4 kW (`HEATER_WATTS=2496`).
-- Panels: **3 kW east 35°** + **10 kW south 45°** (configurable via `PV_ARRAYS`). Only the boiler's phase share (`BOILER_PHASE_SHARE≈0.33`) reaches the heater.
+- Panels: **3.6 kW east/south-east 30°** (bifacial) + **14.5 kW south 45°** (configurable via `PV_ARRAYS`). Only the boiler's phase share (`BOILER_PHASE_SHARE≈0.33`) reaches the heater.
 - Thermostat caps the tank at ~63 °C (`TANK_MAX_TEMP=63`), never assumed above.
 
 ---
@@ -79,7 +79,7 @@ Fallback chain when grid data unavailable:
 ```
 PORT,INFLUX_URL,INFLUX_TOKEN,ORG          # required
 FORECAST_PROVIDER=open-meteo|solcast
-PV_ARRAYS=[{"kWp":3,"tilt":35,"azimuth":-90},{"kWp":10,"tilt":45,"azimuth":0}]
+PV_ARRAYS=[{"kWp":3.6,"tilt":30,"azimuth":-70},{"kWp":14.5,"tilt":45,"azimuth":-10}]
 PV_EFFICIENCY=0.85 LAT=57 LON=25
 FORECAST_SQLITE=./data/heat.db
 SOLCAST_API_KEY= SOLCAST_SITE_ID=         # if solcast
@@ -98,7 +98,7 @@ HYSTERESIS_DEG=1
 MIN_ELEV_DEG=12              # offline sun gate
 MORNING_TEMP=40              # hard daily floor (may import)
 MORNING_START_HOUR=6 MORNING_END_HOUR=10
-BOILER_PHASE_SHARE=0.33      # boiler sees ~1/3 of the 13 kWp total array
+BOILER_PHASE_SHARE=0.33      # boiler sees ~1/3 of the 18.1 kWp total array (physical wiring)
 MPC_HORIZON_HOURS=24         # optimizer horizon (rolling, re-solved each /allow)
 TERMINAL_FACTOR=0.5          # discount on future heat value → no night "banking"
 HEATER_WATTS=2496            # heater draw (single phase)

@@ -16,7 +16,8 @@ describe('OpenMeteoProvider generic', () => {
     let call = 0;
     global.fetch = jest.fn().mockImplementation(() => {
       call++;
-      // first array is E 3kWp, second S 10kWp – return slightly different irradiance to prove sum
+      // two arbitrary arrays (3 kWp + 10 kWp, NOT the real install) – return slightly
+      // different irradiance per array to prove the merge sums correctly
       const irr = call === 1 ? [500, 800] : [600, 900];
       return Promise.resolve({
         ok: true,
