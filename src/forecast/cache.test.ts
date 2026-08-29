@@ -79,4 +79,45 @@ describe('SqliteForecastStore', () => {
     expect(await s.lastHot()).toBeNull();
     await s.close();
   });
+
+  it('recentDecisions supports time-range filter', async () => {
+    const s = new SqliteForecastStore(':memory:');
+    await s.appendDecision({
+      at: new Date('2026-08-28T08:00:00Z'),
+      temp: 50,
+      livePower: 100,
+      heatCmd: true,
+      heatOn: true,
+      reason: 'free-surplus',
+      importKwh: 0,
+      nextFreeHours: -1,
+      solarToday: 3,
+      solarTomorrow: 2,
+    });
+    await s.appendDecision({
+      at: new Date('2026-08-28T12:00:00Z'),
+      temp: 60,
+      livePower: 90,
+      heatCmd: false,
+      heatOn: false,
+      reason: 'defer',
+      importKwh: 0,
+      nextFreeHours: 4,
+      solarToday: 3,
+      solarTomorrow: 2,
+    });
+    // range captures only the 12:00 row
+    const inRange = await s.recentDecisions(
+      50,
+      new Date('2026-08-28T10:00:00Z'),
+      new Date('2026-08-28T23:00:00Z')
+    );
+    expect(inRange.length).toBe(1);
+    expect(inRange[0].at.toISOString()).toBe('2026-08-28T12:00:00.000Z');
+    // no range → both, newest first
+    const all = await s.recentDecisions(50);
+    expect(all.length).toBe(2);
+    expect(all[0].at.toISOString()).toBe('2026-08-28T12:00:00.000Z');
+    await s.close();
+  });
 });

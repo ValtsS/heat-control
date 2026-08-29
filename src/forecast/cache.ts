@@ -31,7 +31,7 @@ export interface ForecastStore {
   saveSample(s: Sample): Promise<void>;
   lastSample(): Promise<Sample | null>;
   appendDecision(d: DecisionLog): Promise<void>;
-  recentDecisions(limit: number): Promise<DecisionLog[]>;
+  recentDecisions(limit: number, from?: Date, to?: Date): Promise<DecisionLog[]>;
 }
 
 type Row = { time: number; json: string };
@@ -197,12 +197,24 @@ export class SqliteForecastStore implements ForecastStore {
     });
   }
 
-  async recentDecisions(limit: number): Promise<DecisionLog[]> {
+  async recentDecisions(limit: number, from?: Date, to?: Date): Promise<DecisionLog[]> {
     await this.ready;
     return new Promise((resolve, reject) => {
+      const conds: string[] = [];
+      const params: number[] = [];
+      if (from) {
+        conds.push('at >= ?');
+        params.push(from.getTime());
+      }
+      if (to) {
+        conds.push('at <= ?');
+        params.push(to.getTime());
+      }
+      const where = conds.length ? ` WHERE ${conds.join(' AND ')}` : '';
+      params.push(limit);
       this.db.all(
-        `SELECT at, temp, live_power, heat_cmd, heat_on, reason, import_kwh, next_free_hours, solar_today, solar_tomorrow FROM decisions ORDER BY at DESC LIMIT ?`,
-        [limit],
+        `SELECT at, temp, live_power, heat_cmd, heat_on, reason, import_kwh, next_free_hours, solar_today, solar_tomorrow FROM decisions${where} ORDER BY at DESC LIMIT ?`,
+        params,
         (err, rows) => {
           if (err) return reject(err);
           const r = rows as {
@@ -268,7 +280,12 @@ export class MemoryForecastStore implements ForecastStore {
     this.decisions.push(d);
     if (this.decisions.length > 5000) this.decisions.splice(0, this.decisions.length - 5000);
   }
-  async recentDecisions(limit: number): Promise<DecisionLog[]> {
-    return this.decisions.slice(-limit).reverse();
+  async recentDecisions(limit: number, from?: Date, to?: Date): Promise<DecisionLog[]> {
+    const fromMs = from ? from.getTime() : -Infinity;
+    const toMs = to ? to.getTime() : Infinity;
+    return this.decisions
+      .filter((d) => d.at.getTime() >= fromMs && d.at.getTime() <= toMs)
+      .slice(-limit)
+      .reverse();
   }
 }

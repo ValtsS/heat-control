@@ -77,8 +77,15 @@ app.get('/forecast', async (_req: Request, res: Response) => {
 
 app.get('/logs', async (req: Request, res: Response) => {
   const limitRaw = parseInt(req.query.limit as string, 10);
-  const limit = isNaN(limitRaw) ? 200 : Math.max(1, Math.min(limitRaw, 2000));
-  const logs = await forecastStore.recentDecisions(limit);
+  // cap high enough for a full day of 5s polls (~17k rows); 0/absent → 200
+  const limit = isNaN(limitRaw) ? 200 : Math.max(1, Math.min(limitRaw, 20000));
+  const from = req.query.from ? new Date(req.query.from as string) : undefined;
+  const to = req.query.to ? new Date(req.query.to as string) : undefined;
+  const logs = await forecastStore.recentDecisions(
+    limit,
+    isNaN(from ? from.getTime() : NaN) ? undefined : from,
+    isNaN(to ? to.getTime() : NaN) ? undefined : to
+  );
   res.json({ count: logs.length, logs });
 });
 
