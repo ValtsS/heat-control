@@ -167,7 +167,9 @@ app.get('/debug', async (_req: Request, res: Response) => {
 });
 
 app.get('/allow', async (req: Request, res: Response) => {
-  console.log(req.query);
+  // express 5 returns req.query as a null-prototype object – JSON.stringify
+  // renders it like a normal object for readable logs
+  console.log(JSON.stringify(req.query));
   const params = req.query as AllowParams;
   const heatIsOn = params.relay == '1';
   const T = parseFloat(params.temp);
