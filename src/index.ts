@@ -11,6 +11,7 @@ import { ForecastScheduler } from './forecast/scheduler';
 import { LegionellaService } from './legionella';
 import { PowerService } from './power';
 import { ForecastProcessor } from './forecast/processor';
+import { TempFilter } from './tempFilter';
 
 type AllowParams = {
   lastState: string;
@@ -56,6 +57,8 @@ scheduler.start().catch((e) => console.error('scheduler start failed', e));
 
 const legionella = new LegionellaService(forecastStore);
 const powerService = new PowerService(flux, () => forecastStore.load());
+// filters DS1820 spike noise before it reaches the controller; raw kept for /debug
+const tempFilter = new TempFilter();
 
 app.get('/', (req: Request, res: Response) => {
   res.send(`/power to read available power<br/>
@@ -123,6 +126,15 @@ app.get('/debug', async (_req: Request, res: Response) => {
           heatOn: lastSample.heatOn,
         }
       : null,
+    tempFilter: {
+      raw: tempFilter.raw,
+      filtered: tempFilter.value,
+      // how many °C of the latest raw reading was rejected as a spike
+      rejectedBy:
+        tempFilter.raw !== null && tempFilter.value !== null
+          ? tempFilter.raw - tempFilter.value
+          : null,
+    },
     power: { watts: power.power ?? null, estimated: power.estimated, source: power.source },
     controlState: getControlStateForTest(),
     legionella: { forced: legionellaForced, lastHot: lastHot?.toISOString() ?? null },
@@ -172,7 +184,9 @@ app.get('/allow', async (req: Request, res: Response) => {
   console.log(JSON.stringify(req.query));
   const params = req.query as AllowParams;
   const heatIsOn = params.relay == '1';
-  const T = parseFloat(params.temp);
+  const Traw = parseFloat(params.temp);
+  // filtered temp drives the decision (spike rejection + smoothing); raw is kept for logs
+  const T = tempFilter.update(Traw);
 
   const { power } = await powerService.getAvailablePower();
   const forecast = await forecastStore.load();
@@ -190,6 +204,7 @@ app.get('/allow', async (req: Request, res: Response) => {
       await forecastStore.appendDecision({
         at: new Date(),
         temp: T,
+        tempRaw: Traw,
         livePower: power ?? 0,
         heatCmd,
         heatOn: heatIsOn,
@@ -204,8 +219,9 @@ app.get('/allow', async (req: Request, res: Response) => {
     console.error('decision log', e);
   }
 
-  // legionella tracking – record if we reached 60C
-  legionella.recordIfHot(T).catch((e) => console.error('legionella record', e));
+  // legionella tracking – record if we reached 60C (uses RAW so a spike can't falsely
+  // satisfy the 7-day timer; the tank genuinely reaching 60 is what counts)
+  legionella.recordIfHot(Traw).catch((e) => console.error('legionella record', e));
   // persist latest sample so /debug reflects the real background poll
   forecastStore
     .saveSample({ at: new Date(), temp: T, power: power ?? 0, heatOn: heatIsOn })

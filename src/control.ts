@@ -30,6 +30,37 @@ let retainstateUntil: bigint = BigInt(0);
 // 15 secods
 const StabilizationTime = BigInt(1000000000 * 15);
 
+// Hysteresis latch for the MPC path: remember the last enable decision and the
+// temperature at which it flipped, and don't flip back until the temperature has
+// moved at least HYSTERESIS_DEG from that point. Prevents small temp wobble (or a
+// residual unfiltered reading) from toggling the relay every poll.
+export function applyHysteresis(
+  desired: boolean,
+  temperature: number,
+  hysteresisDeg: number,
+  lastDecision: boolean | null,
+  lastFlipTemp: number
+): { enable: boolean; lastDecision: boolean; lastFlipTemp: number } {
+  if (lastDecision === null || isNaN(lastFlipTemp)) {
+    return { enable: desired, lastDecision: desired, lastFlipTemp: temperature };
+  }
+  if (desired === lastDecision) {
+    return { enable: lastDecision, lastDecision, lastFlipTemp };
+  }
+  // desired differs from current → only flip if temp moved enough from flip point
+  const moved =
+    desired === true
+      ? temperature <= lastFlipTemp - hysteresisDeg
+      : temperature >= lastFlipTemp + hysteresisDeg;
+  if (moved) {
+    return { enable: desired, lastDecision: desired, lastFlipTemp: temperature };
+  }
+  return { enable: lastDecision, lastDecision, lastFlipTemp };
+}
+
+let lastHeatDecision: boolean | null = null;
+let lastHeatFlipTemp: number = NaN;
+
 export const HEATER_WATTS = HEATER_WATTS_VAL;
 
 let lastPlan: SchedulePlan | null = null;
@@ -38,6 +69,8 @@ export function resetControlStateForTest(): void {
   currentState = PowerState.Undefined;
   retainstateUntil = BigInt(0);
   lastPlan = null;
+  lastHeatDecision = null;
+  lastHeatFlipTemp = NaN;
 }
 
 export function getControlStateForTest(): PowerState {
@@ -115,7 +148,17 @@ export function GetStateWithForecast(
       const tp = planTank(at, temperature, forecast, defaultTankConfig());
       enableHeater = elevation >= MinElevDeg && temperature < tp.requiredNow - HYSTERESIS_DEG;
     } else {
-      enableHeater = plan.heat;
+      // MPC path – temperature deadband so small wobble doesn't flip the relay.
+      const { enable, lastDecision, lastFlipTemp } = applyHysteresis(
+        plan.heat,
+        temperature,
+        HYSTERESIS_DEG,
+        lastHeatDecision,
+        lastHeatFlipTemp
+      );
+      enableHeater = enable;
+      lastHeatDecision = lastDecision;
+      lastHeatFlipTemp = lastFlipTemp;
     }
   }
 

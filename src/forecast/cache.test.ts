@@ -85,6 +85,7 @@ describe('SqliteForecastStore', () => {
     await s.appendDecision({
       at: new Date('2026-08-28T08:00:00Z'),
       temp: 50,
+      tempRaw: 50.2,
       livePower: 100,
       heatCmd: true,
       heatOn: true,
@@ -97,6 +98,7 @@ describe('SqliteForecastStore', () => {
     await s.appendDecision({
       at: new Date('2026-08-28T12:00:00Z'),
       temp: 60,
+      tempRaw: 66.1,
       livePower: 90,
       heatCmd: false,
       heatOn: false,
@@ -118,6 +120,7 @@ describe('SqliteForecastStore', () => {
     const all = await s.recentDecisions(50);
     expect(all.length).toBe(2);
     expect(all[0].at.toISOString()).toBe('2026-08-28T12:00:00.000Z');
+    expect(all[0].tempRaw).toBe(66.1); // raw spike preserved for diagnostics
     await s.close();
   });
 });

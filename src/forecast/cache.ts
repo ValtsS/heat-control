@@ -12,7 +12,8 @@ export type Sample = {
 
 export type DecisionLog = {
   at: Date;
-  temp: number;
+  temp: number; // filtered temp used for the decision
+  tempRaw: number; // raw DS1820 reading before spike rejection
   livePower: number; // W on boiler phase (actual)
   heatCmd: boolean; // commanded heater
   heatOn: boolean; // relay: actual power reaching the element
@@ -61,11 +62,17 @@ export class SqliteForecastStore implements ForecastStore {
                     if (e3) return reject(e3);
                     this.db.run(
                       `CREATE TABLE IF NOT EXISTS decisions (
-                        at INTEGER, temp REAL, live_power REAL, heat_cmd INTEGER,
+                        at INTEGER, temp REAL, temp_raw REAL, live_power REAL, heat_cmd INTEGER,
                         heat_on INTEGER, reason TEXT, import_kwh REAL,
                         next_free_hours INTEGER, solar_today REAL, solar_tomorrow REAL
                       )`,
-                      (e4) => (e4 ? reject(e4) : resolve())
+                      (e4) =>
+                        e4
+                          ? reject(e4)
+                          : this.db.run(
+                              `ALTER TABLE decisions ADD COLUMN temp_raw REAL`,
+                              () => resolve() // ignore "duplicate column" on existing DBs
+                            )
                     );
                   }
                 );
@@ -179,10 +186,11 @@ export class SqliteForecastStore implements ForecastStore {
     await this.ready;
     return new Promise((resolve, reject) => {
       this.db.run(
-        `INSERT INTO decisions (at, temp, live_power, heat_cmd, heat_on, reason, import_kwh, next_free_hours, solar_today, solar_tomorrow) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO decisions (at, temp, temp_raw, live_power, heat_cmd, heat_on, reason, import_kwh, next_free_hours, solar_today, solar_tomorrow) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
         [
           d.at.getTime(),
           d.temp,
+          d.tempRaw,
           d.livePower,
           d.heatCmd ? 1 : 0,
           d.heatOn ? 1 : 0,
@@ -213,13 +221,14 @@ export class SqliteForecastStore implements ForecastStore {
       const where = conds.length ? ` WHERE ${conds.join(' AND ')}` : '';
       params.push(limit);
       this.db.all(
-        `SELECT at, temp, live_power, heat_cmd, heat_on, reason, import_kwh, next_free_hours, solar_today, solar_tomorrow FROM decisions${where} ORDER BY at DESC LIMIT ?`,
+        `SELECT at, temp, temp_raw, live_power, heat_cmd, heat_on, reason, import_kwh, next_free_hours, solar_today, solar_tomorrow FROM decisions${where} ORDER BY at DESC LIMIT ?`,
         params,
         (err, rows) => {
           if (err) return reject(err);
           const r = rows as {
             at: number;
             temp: number;
+            temp_raw: number | null;
             live_power: number;
             heat_cmd: number;
             heat_on: number;
@@ -233,6 +242,7 @@ export class SqliteForecastStore implements ForecastStore {
             r.map((x) => ({
               at: new Date(x.at),
               temp: x.temp,
+              tempRaw: x.temp_raw ?? x.temp,
               livePower: x.live_power,
               heatCmd: x.heat_cmd === 1,
               heatOn: x.heat_on === 1,
