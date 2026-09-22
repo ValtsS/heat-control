@@ -45,6 +45,9 @@ export function defaultPlannerConfig(): PlannerConfig {
     },
     heaterKw: parseNum(process.env.HEATER_WATTS, 2496) / 1000,
     boilerPhaseShare: parseNum(process.env.BOILER_PHASE_SHARE, 0.33),
+    // Keep 24h. Longer horizons (48h) make the solver import at night to "hold a warm
+    // tank" when tomorrow is poor – but that heat bleeds off overnight anyway, so it's
+    // wasted evening-comfort import. 24h sees only the near term and defers correctly.
     horizonHours: parseNum(process.env.MPC_HORIZON_HOURS, 24),
     morning: {
       startHour: parseIntValSafe(process.env.MORNING_START_HOUR, 6),
